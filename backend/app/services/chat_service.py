@@ -1,0 +1,606 @@
+"""
+Chat Service Module
+
+This module provides conversational AI capabilities for analyzing Jira tickets.
+It manages conversation state, context (tickets, attachments), and LLM interactions.
+
+The ChatService class handles:
+- Conversation history management
+- Multi-ticket context loading
+- Attachment processing (text, images, logs)
+- Model switching during conversation
+- RAG integration for knowledge base retrieval
+- Conversation export
+
+Classes:
+    - ChatMessage: Dataclass for chat messages
+    - ChatService: Main service for chat functionality
+
+Example Usage:
+    ```python
+    from src.services.chat_service import ChatService
+    
+    # Initialize
+    chat = ChatService(aws_service, vector_store)
+    
+    # Load ticket context
+    chat.add_ticket("PROJ-123", ticket_details)
+    
+    # Add attachment
+    chat.add_attachment("error.log", log_content, "text/plain")
+    
+    # Send message
+    response = chat.send_message("What's causing the error?")
+    
+    # Export conversation
+    markdown = chat.export_conversation()
+    ```
+"""
+
+import base64
+import json
+import os
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Literal
+from pathlib import Path
+
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+from app.services.aws_bedrock_service import AWSBedrockService
+from app.services.vector_store_service import VectorStoreService
+
+
+@dataclass
+class ChatAttachment:
+    """Represents an attachment in the chat context."""
+    name: str
+    content: str  # Text content or base64 for images
+    content_type: str  # MIME type
+    is_image: bool = False
+    added_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    
+    def to_dict(self) -> dict:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ChatAttachment':
+        return cls(**data)
+
+
+@dataclass
+class ChatMessage:
+    """Represents a single message in the conversation."""
+    role: Literal["user", "assistant", "system"]
+    content: str
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    model_used: Optional[str] = None
+    attachments: List[str] = field(default_factory=list)  # Attachment names
+    
+    def to_dict(self) -> dict:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ChatMessage':
+        return cls(**data)
+
+
+@dataclass
+class TicketContext:
+    """Represents a Jira ticket in the conversation context."""
+    ticket_id: str
+    summary: str
+    description: str
+    content: str  # Full formatted content
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    added_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    
+    def to_dict(self) -> dict:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'TicketContext':
+        return cls(**data)
+
+
+class ChatService:
+    """
+    Service for managing conversational AI interactions for ticket analysis.
+    
+    This service provides:
+    - Multi-turn conversation management
+    - Multi-ticket context support
+    - Attachment handling (text and images)
+    - Dynamic model switching
+    - RAG integration for knowledge base queries
+    - Conversation persistence and export
+    
+    Attributes:
+        aws_service: AWS Bedrock service for LLM access
+        vector_store: Vector store service for RAG (optional)
+        messages: List of conversation messages
+        tickets: Dict of loaded tickets by ID
+        attachments: List of attachments
+        use_rag: Whether to use RAG for context retrieval
+    """
+    
+    # System prompt for ticket analysis
+    SYSTEM_PROMPT = """You are an expert technical analyst helping team members understand and analyze Jira tickets. Your role is to:
+
+1. **For Developers**: Provide technical breakdowns, identify edge cases, suggest implementation approaches, and highlight potential issues.
+
+2. **For QA Engineers**: Identify test scenarios, risk areas, and validation points.
+
+3. **For Tech Leads**: Assess complexity, identify dependencies, and spot gaps in requirements.
+
+4. **For Product Owners**: Summarize technical implications and clarify requirements.
+
+You have access to:
+- Jira ticket details (summary, description, acceptance criteria, comments)
+- Any attached files (logs, documents, code, images)
+- Knowledge base context (if available)
+
+Guidelines:
+- Be specific and actionable in your responses
+- Reference specific parts of tickets or attachments when relevant
+- Ask clarifying questions if needed
+- Highlight risks, edge cases, and missing information
+- Format responses clearly with markdown
+
+{context}"""
+
+    QUICK_ACTIONS = {
+        "summarize": "Provide a concise summary of this ticket for a developer, highlighting the key technical requirements and acceptance criteria.",
+        "find_gaps": "Analyze this ticket and identify what information is missing, unclear, or ambiguous. What questions should be asked before starting work?",
+        "risk_analysis": "What are the potential risks, challenges, and things that could go wrong with this ticket? Consider technical debt, dependencies, and edge cases.",
+        "technical_details": "Break down the technical requirements and implementation considerations for this ticket. What components are affected? What's the suggested approach?",
+        "test_suggestions": "What test scenarios should be covered for this ticket? Include happy path, negative cases, and edge cases.",
+        "clarify_ac": "Expand and clarify the acceptance criteria. What specific behaviors should be verified? What are the boundary conditions?",
+        "definition_of_done": "Provide a Definition of Done checklist for this ticket: what must be true before it can be considered complete? Include code, tests, docs, and review criteria.",
+        "dependencies_blockers": "Identify dependencies (other tickets, systems, or teams) and potential blockers for this ticket. What needs to be in place before or during work?",
+    }
+
+    def __init__(
+        self,
+        aws_service: AWSBedrockService,
+        vector_store: Optional[VectorStoreService] = None,
+        use_rag: bool = True
+    ):
+        """
+        Initialize the ChatService.
+        
+        Args:
+            aws_service: AWS Bedrock service for LLM access
+            vector_store: Optional vector store for RAG
+            use_rag: Whether to use RAG for context retrieval
+        """
+        self.aws_service = aws_service
+        self.vector_store = vector_store
+        self.use_rag = use_rag and vector_store is not None
+        
+        self.messages: List[ChatMessage] = []
+        self.tickets: Dict[str, TicketContext] = {}
+        self.attachments: List[ChatAttachment] = []
+        self.conversation_id: str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # ==========================================================================
+    # CONTEXT MANAGEMENT
+    # ==========================================================================
+    
+    def add_ticket(self, ticket_id: str, ticket_details: Dict[str, Any]) -> None:
+        """
+        Add a Jira ticket to the conversation context.
+        
+        Args:
+            ticket_id: Jira ticket ID (e.g., "PROJ-123")
+            ticket_details: Ticket details dict with 'text' and 'meta' keys
+        """
+        context = TicketContext(
+            ticket_id=ticket_id,
+            summary=ticket_details.get('meta', {}).get('title', ''),
+            description=ticket_details.get('text', ''),
+            content=ticket_details.get('text', ''),
+            metadata=ticket_details.get('meta', {})
+        )
+        self.tickets[ticket_id] = context
+        
+        # Add system notification
+        self._add_system_message(f"Loaded ticket {ticket_id}: {context.summary}")
+    
+    def remove_ticket(self, ticket_id: str, clear_history: bool = False) -> bool:
+        """
+        Remove a ticket from the conversation context.
+        
+        Args:
+            ticket_id: Ticket ID to remove
+            clear_history: If True, clears conversation history related to this ticket
+            
+        Returns:
+            True if ticket was removed, False if not found
+        """
+        if ticket_id in self.tickets:
+            del self.tickets[ticket_id]
+            
+            if clear_history:
+                # Clear all conversation history when removing ticket
+                self.messages.clear()
+                self._add_system_message(
+                    f"🔄 Ticket {ticket_id} removed and conversation cleared. "
+                    "Ready for new context."
+                )
+            else:
+                # Add explicit instruction for LLM to ignore old ticket
+                self._add_system_message(
+                    f"⚠️ IMPORTANT: Ticket {ticket_id} has been REMOVED from context. "
+                    "Do NOT reference or use any information from this ticket in future responses. "
+                    "Only use currently loaded tickets."
+                )
+            return True
+        return False
+    
+    def add_attachment(
+        self,
+        name: str,
+        content: Any,
+        content_type: str
+    ) -> ChatAttachment:
+        """
+        Add an attachment to the conversation context.
+        
+        Args:
+            name: Filename
+            content: File content (bytes or string)
+            content_type: MIME type
+            
+        Returns:
+            Created ChatAttachment object
+        """
+        is_image = content_type.startswith('image/')
+        
+        if is_image:
+            # Encode image as base64
+            if isinstance(content, bytes):
+                content_str = base64.b64encode(content).decode('utf-8')
+            else:
+                content_str = content
+        else:
+            # Text content
+            if isinstance(content, bytes):
+                content_str = content.decode('utf-8', errors='replace')
+            else:
+                content_str = str(content)
+        
+        attachment = ChatAttachment(
+            name=name,
+            content=content_str,
+            content_type=content_type,
+            is_image=is_image
+        )
+        self.attachments.append(attachment)
+        
+        self._add_system_message(f"Added attachment: {name}")
+        return attachment
+    
+    def remove_attachment(self, name: str) -> bool:
+        """Remove an attachment by name."""
+        for i, att in enumerate(self.attachments):
+            if att.name == name:
+                self.attachments.pop(i)
+                self._add_system_message(f"Removed attachment: {name}")
+                return True
+        return False
+    
+    def clear_context(self) -> None:
+        """Clear all tickets and attachments."""
+        self.tickets.clear()
+        self.attachments.clear()
+        self._add_system_message("Cleared all context (tickets and attachments)")
+    
+    # ==========================================================================
+    # CONVERSATION MANAGEMENT
+    # ==========================================================================
+    
+    def send_message(
+        self,
+        user_message: str,
+        include_attachments: Optional[List[str]] = None
+    ) -> str:
+        """
+        Send a message and get AI response.
+        
+        Args:
+            user_message: User's message
+            include_attachments: Optional list of attachment names to include
+            
+        Returns:
+            AI response text
+        """
+        # Prevent duplicate messages (same content sent twice in a row)
+        user_messages = [m for m in self.messages if m.role == "user"]
+        if user_messages and user_messages[-1].content == user_message:
+            # Return the last assistant response if available
+            assistant_messages = [m for m in self.messages if m.role == "assistant"]
+            if assistant_messages:
+                return assistant_messages[-1].content
+            return "Message already sent."
+        
+        # Record user message
+        user_msg = ChatMessage(
+            role="user",
+            content=user_message,
+            attachments=include_attachments or []
+        )
+        self.messages.append(user_msg)
+        
+        # Check if LLM is initialized
+        if not self.aws_service.llm:
+            error_msg = "⚠️ **Error:** LLM not initialized. Please check AWS configuration:\n\n1. Enter your AWS Profile name in the sidebar\n2. Or set AWS credentials via environment variables\n3. Click **Initialize** to reconnect"
+            error_response = ChatMessage(
+                role="assistant",
+                content=error_msg
+            )
+            self.messages.append(error_response)
+            return error_msg
+        
+        # Build context
+        context_parts = self._build_context(include_attachments)
+        
+        # Get RAG context if enabled
+        rag_context = ""
+        if self.use_rag and self.vector_store:
+            rag_context = self._get_rag_context(user_message)
+            if rag_context:
+                context_parts.append(f"\n**Knowledge Base Context:**\n{rag_context}")
+        
+        # Build system message with context
+        system_content = self.SYSTEM_PROMPT.format(
+            context="\n".join(context_parts) if context_parts else "No specific context loaded."
+        )
+        
+        # Build message history for LLM
+        llm_messages = [SystemMessage(content=system_content)]
+        
+        # Add conversation history (excluding system messages)
+        for msg in self.messages:
+            if msg.role == "user":
+                llm_messages.append(HumanMessage(content=msg.content))
+            elif msg.role == "assistant":
+                llm_messages.append(AIMessage(content=msg.content))
+        
+        try:
+            # Get response from LLM
+            response = self.aws_service.llm.invoke(llm_messages)
+            response_text = response.content
+            
+            # Record assistant message
+            assistant_msg = ChatMessage(
+                role="assistant",
+                content=response_text,
+                model_used=self.aws_service.bedrock_model
+            )
+            self.messages.append(assistant_msg)
+            
+            return response_text
+            
+        except Exception as e:
+            error_msg = f"⚠️ **Error generating response:**\n\n`{str(e)}`\n\nPlease check your AWS credentials and try again."
+            # Add error as assistant message so it shows in chat
+            error_response = ChatMessage(
+                role="assistant",
+                content=error_msg
+            )
+            self.messages.append(error_response)
+            return error_msg
+    
+    def send_quick_action(self, action: str) -> str:
+        """
+        Send a pre-defined quick action prompt.
+        
+        Args:
+            action: Action key from QUICK_ACTIONS
+            
+        Returns:
+            AI response text
+        """
+        if action not in self.QUICK_ACTIONS:
+            return f"Unknown action: {action}"
+        
+        prompt = self.QUICK_ACTIONS[action]
+        return self.send_message(prompt)
+    
+    def _add_system_message(self, content: str) -> None:
+        """Add a system notification message."""
+        msg = ChatMessage(role="system", content=content)
+        self.messages.append(msg)
+    
+    def _build_context(self, include_attachments: Optional[List[str]] = None) -> List[str]:
+        """Build context string from tickets and attachments."""
+        parts = []
+        
+        # Clearly state currently loaded tickets
+        if self.tickets:
+            ticket_ids = list(self.tickets.keys())
+            parts.append(f"**⚠️ CURRENTLY LOADED TICKETS (ONLY use these):** {', '.join(ticket_ids)}")
+            parts.append("Do NOT reference any tickets that are not in this list.\n")
+            
+            for ticket_id, ticket in self.tickets.items():
+                parts.append(f"\n--- Ticket: {ticket_id} ---")
+                parts.append(ticket.content)
+        else:
+            parts.append("**No tickets currently loaded.** Do not reference any previous tickets.")
+        
+        # Add text attachments
+        text_attachments = [a for a in self.attachments if not a.is_image]
+        if text_attachments:
+            parts.append("\n**Attached Documents:**")
+            for att in text_attachments:
+                if include_attachments is None or att.name in include_attachments:
+                    # Truncate very long attachments
+                    content = att.content
+                    if len(content) > 50000:
+                        content = content[:50000] + "\n... [truncated]"
+                    parts.append(f"\n--- {att.name} ({att.content_type}) ---")
+                    parts.append(content)
+        
+        return parts
+    
+    def _get_rag_context(self, query: str, n_results: int = 3) -> str:
+        """Get relevant context from the knowledge base."""
+        if not self.vector_store or self.vector_store.count() == 0:
+            return ""
+        
+        results = self.vector_store.retrieve(query, n_results=n_results)
+        documents = results.get('documents', [])
+        
+        if not documents:
+            return ""
+        
+        return "\n---\n".join(documents)
+    
+    # ==========================================================================
+    # MODEL MANAGEMENT
+    # ==========================================================================
+    
+    def switch_model(self, model_id: str) -> bool:
+        """
+        Switch to a different LLM model.
+        
+        Args:
+            model_id: New model ID
+            
+        Returns:
+            True if switch was successful
+        """
+        success = self.aws_service.update_model_config(bedrock_model=model_id)
+        if success:
+            self._add_system_message(f"Switched to model: {model_id}")
+        return success
+    
+    def get_current_model(self) -> str:
+        """Get the current model ID."""
+        return self.aws_service.bedrock_model
+    
+    # ==========================================================================
+    # CONVERSATION HISTORY
+    # ==========================================================================
+    
+    def clear_messages(self) -> None:
+        """Clear conversation history but keep context."""
+        self.messages.clear()
+    
+    def clear_all(self) -> None:
+        """Clear everything - messages, tickets, and attachments."""
+        self.messages.clear()
+        self.tickets.clear()
+        self.attachments.clear()
+        self.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    def get_messages(self, include_system: bool = False) -> List[ChatMessage]:
+        """Get conversation messages."""
+        if include_system:
+            return self.messages
+        return [m for m in self.messages if m.role != "system"]
+    
+    def get_context_summary(self) -> Dict[str, Any]:
+        """Get a summary of the current context."""
+        return {
+            "tickets": list(self.tickets.keys()),
+            "attachments": [a.name for a in self.attachments],
+            "message_count": len([m for m in self.messages if m.role != "system"]),
+            "model": self.get_current_model(),
+            "rag_enabled": self.use_rag
+        }
+    
+    # ==========================================================================
+    # EXPORT AND PERSISTENCE
+    # ==========================================================================
+    
+    def export_conversation(self, format: Literal["markdown", "json"] = "markdown") -> str:
+        """
+        Export the conversation.
+        
+        Args:
+            format: Export format ("markdown" or "json")
+            
+        Returns:
+            Exported conversation as string
+        """
+        if format == "json":
+            return self._export_json()
+        return self._export_markdown()
+    
+    def _export_markdown(self) -> str:
+        """Export conversation as markdown."""
+        lines = [f"# Ticket Analysis Conversation\n"]
+        lines.append(f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        lines.append(f"**Conversation ID:** {self.conversation_id}\n")
+        
+        # Tickets
+        if self.tickets:
+            lines.append("\n## Loaded Tickets\n")
+            for ticket_id, ticket in self.tickets.items():
+                lines.append(f"- **{ticket_id}**: {ticket.summary}")
+        
+        # Attachments
+        if self.attachments:
+            lines.append("\n## Attachments\n")
+            for att in self.attachments:
+                lines.append(f"- {att.name} ({att.content_type})")
+        
+        # Conversation
+        lines.append("\n## Conversation\n")
+        for msg in self.messages:
+            if msg.role == "system":
+                lines.append(f"\n*[System: {msg.content}]*\n")
+            elif msg.role == "user":
+                lines.append(f"\n**User** ({msg.timestamp[:16].replace('T', ' ')}):\n")
+                lines.append(msg.content)
+                if msg.attachments:
+                    lines.append(f"\n*Attached: {', '.join(msg.attachments)}*")
+            else:
+                model = f" [{msg.model_used}]" if msg.model_used else ""
+                lines.append(f"\n**Assistant**{model} ({msg.timestamp[:16].replace('T', ' ')}):\n")
+                lines.append(msg.content)
+        
+        return "\n".join(lines)
+    
+    def _export_json(self) -> str:
+        """Export conversation as JSON."""
+        data = {
+            "conversation_id": self.conversation_id,
+            "exported_at": datetime.now().isoformat(),
+            "tickets": {k: v.to_dict() for k, v in self.tickets.items()},
+            "attachments": [a.to_dict() for a in self.attachments],
+            "messages": [m.to_dict() for m in self.messages],
+            "model": self.get_current_model()
+        }
+        return json.dumps(data, indent=2)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the chat service state to a dictionary."""
+        return {
+            "conversation_id": self.conversation_id,
+            "tickets": {k: v.to_dict() for k, v in self.tickets.items()},
+            "attachments": [a.to_dict() for a in self.attachments],
+            "messages": [m.to_dict() for m in self.messages],
+            "use_rag": self.use_rag
+        }
+    
+    def load_from_dict(self, data: Dict[str, Any]) -> None:
+        """Load chat service state from a dictionary."""
+        self.conversation_id = data.get("conversation_id", self.conversation_id)
+        self.use_rag = data.get("use_rag", self.use_rag)
+        
+        self.tickets = {
+            k: TicketContext.from_dict(v) 
+            for k, v in data.get("tickets", {}).items()
+        }
+        self.attachments = [
+            ChatAttachment.from_dict(a) 
+            for a in data.get("attachments", [])
+        ]
+        self.messages = [
+            ChatMessage.from_dict(m) 
+            for m in data.get("messages", [])
+        ]

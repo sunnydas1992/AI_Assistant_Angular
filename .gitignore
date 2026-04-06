@@ -1,0 +1,73 @@
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+backend/logs/
+frontend/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+env/
+.env
+.env.local
+.env.*.local
+
+# Node / Angular
+node_modules/
+.angular/
+dist/
+tmp/
+.idea/
+.project
+.classpath
+.settings/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App data (optional: uncomment if you don't want to commit Chroma/conversations)
+# backend/data/
+# data/
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.nyc_output/
+coverage/
+
+# Secrets (do not commit)
+*.pem
+.env
+.env.local
