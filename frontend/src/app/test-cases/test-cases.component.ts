@@ -37,6 +37,10 @@ export interface TestCaseItem {
   duplicateChecked?: boolean;
   /** Summary string used for matching (from API, for transparency). */
   summaryUsed?: string;
+  /** Cosine similarity score (0–1) when detected as duplicate. 1.0 = exact match. */
+  similarity?: number;
+  /** How the duplicate was detected: "exact" or "semantic". */
+  matchType?: string;
   /** AI quality review score. */
   quality?: QualityScore;
   /** Snapshot of content before the last refinement, for diff display. */
@@ -229,8 +233,12 @@ export interface TestCaseItem {
                 </span>
               }
               @if (tc.isDuplicate && tc.existingXrayKey) {
-                <span class="tc-dup-badge">
-                  Duplicate:
+                <span class="tc-dup-badge" [title]="duplicateTooltip(tc)">
+                  {{ tc.matchType === 'semantic' ? 'Similar' : 'Duplicate' }}
+                  @if (tc.matchType === 'semantic' && tc.similarity != null) {
+                    <span class="dup-sim-score">({{ (tc.similarity * 100).toFixed(0) }}%)</span>
+                  }
+                  :
                   @if (jiraServerUrl) {
                     <a [href]="jiraBrowseUrl(tc.existingXrayKey)" target="_blank" rel="noopener" class="dup-jira-link">{{ tc.existingXrayKey }}</a>
                   } @else {
@@ -518,6 +526,7 @@ export interface TestCaseItem {
       border-radius: 6px;
       white-space: nowrap;
     }
+    .dup-sim-score { font-weight: 600; opacity: 0.85; }
     .dup-jira-link { color: var(--hyland-blue); font-weight: 700; }
     .dup-key { font-weight: 700; }
     .tc-delete-btn { margin-left: auto; font-size: 1.25rem; line-height: 1; padding: 0.2rem 0.4rem; color: var(--app-icon-delete); border-radius: 4px; }
@@ -873,6 +882,8 @@ export class TestCasesComponent implements OnInit, OnDestroy {
       orig.isDuplicate = false;
       orig.existingXrayKey = undefined;
       orig.summaryUsed = undefined;
+      orig.similarity = undefined;
+      orig.matchType = undefined;
       orig.quality = undefined;
       this.toast.success('Test case updated.');
     }
@@ -1104,6 +1115,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
           this.checkingXrayDuplicates = false;
           const results = res?.results ?? [];
           let dupCount = 0;
+          let semanticCount = 0;
           results.forEach((r, i) => {
             const tc = this.items[i];
             if (!tc) return;
@@ -1111,14 +1123,21 @@ export class TestCasesComponent implements OnInit, OnDestroy {
             tc.isDuplicate = !!r.is_duplicate;
             tc.existingXrayKey = r.existing_issue_key || undefined;
             tc.summaryUsed = r.summary_used;
+            tc.similarity = r.similarity ?? undefined;
+            tc.matchType = r.match_type ?? undefined;
             if (r.is_duplicate) {
               tc.selected = false;
               dupCount += 1;
+              if (r.match_type === 'semantic') semanticCount += 1;
             }
           });
           if (dupCount > 0) {
+            const exactCount = dupCount - semanticCount;
+            const parts: string[] = [];
+            if (exactCount > 0) parts.push(`${exactCount} exact`);
+            if (semanticCount > 0) parts.push(`${semanticCount} semantically similar`);
             this.toast.info(
-              `${dupCount} duplicate test case${dupCount === 1 ? '' : 's'} found in Jira; ${dupCount === 1 ? 'it was' : 'they were'} deselected for publish. Open the existing issue from each row if needed.`,
+              `${dupCount} duplicate test case${dupCount === 1 ? '' : 's'} found (${parts.join(', ')}); ${dupCount === 1 ? 'it was' : 'they were'} deselected for publish.`,
             );
           } else {
             this.toast.success('No duplicates found for the current summaries in that project.');
@@ -1441,6 +1460,8 @@ export class TestCasesComponent implements OnInit, OnDestroy {
           tc.isDuplicate = false;
           tc.existingXrayKey = undefined;
           tc.summaryUsed = undefined;
+          tc.similarity = undefined;
+          tc.matchType = undefined;
           tc.quality = undefined;
           if (r.confidence != null) {
             tc.confidence = r.confidence;
@@ -1515,6 +1536,14 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     if (q.edge_cases) lines.push(`Edge cases: ${q.edge_cases.score}/5 — ${q.edge_cases.reason}`);
     if (q.structure) lines.push(`Structure: ${q.structure.score}/5 — ${q.structure.reason}`);
     return lines.join('\n') || `Overall: ${q.overall}/5`;
+  }
+
+  duplicateTooltip(tc: TestCaseItem): string {
+    if (tc.matchType === 'semantic') {
+      const pct = tc.similarity != null ? `${(tc.similarity * 100).toFixed(0)}%` : '?';
+      return `Semantically similar match (${pct} similarity).\nExisting issue: ${tc.existingXrayKey}\nSummary compared: "${tc.summaryUsed || ''}"`;
+    }
+    return `Exact match found.\nExisting issue: ${tc.existingXrayKey}\nSummary compared: "${tc.summaryUsed || ''}"`;
   }
 
   /** Line-level diff: highlight removed lines in the "before" column. */

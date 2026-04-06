@@ -7,7 +7,7 @@ AI-powered QA Assistant for Jira with **Hyland branding**: analyze tickets, gene
 - **Configuration**: Jira/Confluence URL, credentials, AWS profile and region. **Session-scoped**: each browser or device must initialize with its own credentials; access from another system or browser requires initializing again.
 - **Knowledge base**: Populate from Jira tickets, Confluence URLs, and uploaded files (PDF, DOCX, TXT, MD).
 - **Ticket analyzer**: Load tickets and chat with AI (quick actions: summarize, find gaps, risk analysis, test suggestions). AI model defaults to the one selected in Configuration.
-- **Test cases**: Generate from a Jira ticket or Confluence page (BDD Gherkin or Xray format). You can provide **optional instructions** before generating (e.g. consider accessibility tests, performance, edge cases). Optional RAG; **refine all** test cases with global feedback or **refine a single** test case with per-item feedback; **AI confidence scores** (1–5) per test case with a **human-in-the-loop guardrail**: cases with confidence below 3 are flagged "Needs Review" and must be explicitly approved by the user before they can be published; **Check Xray for duplicates** (Jira project search by summary) with badges and browse links; publish skips duplicate summaries by default; edit and select which to publish; write selected or all test cases to **Jira Xray**; export to Excel. Long-running actions show a shared **thinking** overlay (progress steps) across Test Cases, Test Plan, Ticket Analyzer, Knowledge Base, Configuration, and Home.
+- **Test cases**: Generate from a Jira ticket or Confluence page (BDD Gherkin or Xray format). You can provide **optional instructions** before generating (e.g. consider accessibility tests, performance, edge cases). Optional RAG; **refine all** test cases with global feedback or **refine a single** test case with per-item feedback; **AI confidence scores** (1–5) per test case with a **human-in-the-loop guardrail**: cases with confidence below 3 are flagged "Needs Review" and must be explicitly approved by the user before they can be published; **Check Xray for duplicates** — two-pass detection: (1) exact normalized match, (2) **semantic similarity** via sentence embeddings (cosine similarity ≥ 80%) with match type and similarity score badges; publish skips duplicate summaries by default; edit and select which to publish; write selected or all test cases to **Jira Xray**; export to Excel. Long-running actions show a shared **thinking** overlay (progress steps) across Test Cases, Test Plan, Ticket Analyzer, Knowledge Base, Configuration, and Home.
 - **Test plan**: Generate from Confluence URLs, Jira tickets, and uploads; refine with feedback; publish to Confluence.
 
 ## Tech stack
@@ -142,7 +142,7 @@ cd backend
 python -m pytest tests/ -v
 ```
 
-Includes unit tests for Xray duplicate summary logic (`tests/test_xray_duplicate.py`).
+Includes unit tests for Xray duplicate summary logic and semantic similarity (`tests/test_xray_duplicate.py`).
 
 ## Project layout
 

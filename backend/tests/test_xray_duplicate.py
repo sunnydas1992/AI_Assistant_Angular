@@ -1,9 +1,11 @@
-"""Unit tests for Xray duplicate summary extraction and normalization."""
+"""Unit tests for Xray duplicate summary extraction, normalization, and semantic similarity."""
 
 import pytest
 
 from app.services.xray_duplicate import (
+    _cosine_similarity,
     extract_xray_comparable_summary,
+    find_semantic_match,
     normalize_xray_summary_for_match,
     pick_jql_summary_token,
     tiebreak_duplicate_issues,
@@ -71,3 +73,77 @@ def test_tiebreak_single_issue():
 
     only = Issue()
     assert tiebreak_duplicate_issues([only]).key == "X-1"
+
+
+# ---------------------------------------------------------------------------
+# Semantic similarity tests
+# ---------------------------------------------------------------------------
+
+def test_cosine_similarity_identical_vectors():
+    assert _cosine_similarity([1, 0, 0], [1, 0, 0]) == pytest.approx(1.0)
+
+
+def test_cosine_similarity_orthogonal_vectors():
+    assert _cosine_similarity([1, 0], [0, 1]) == pytest.approx(0.0)
+
+
+def test_cosine_similarity_opposite_vectors():
+    assert _cosine_similarity([1, 0], [-1, 0]) == pytest.approx(-1.0)
+
+
+def test_cosine_similarity_zero_vector():
+    assert _cosine_similarity([0, 0], [1, 1]) == 0.0
+
+
+def test_find_semantic_match_returns_best_above_threshold():
+    class Issue:
+        def __init__(self, key):
+            self.key = key
+
+    def fake_embed(texts):
+        vecs = {
+            "Verify user login": [1.0, 0.0, 0.0],
+            "Check user authentication": [0.95, 0.3, 0.0],
+            "Test payment processing": [0.0, 0.0, 1.0],
+        }
+        return [vecs.get(t, [0.0, 0.0, 0.0]) for t in texts]
+
+    candidates = [
+        (Issue("T-1"), "Check user authentication"),
+        (Issue("T-2"), "Test payment processing"),
+    ]
+    result = find_semantic_match("Verify user login", candidates, fake_embed, threshold=0.5)
+    assert result is not None
+    matched_issue, score = result
+    assert matched_issue.key == "T-1"
+    assert score > 0.5
+
+
+def test_find_semantic_match_returns_none_below_threshold():
+    class Issue:
+        def __init__(self, key):
+            self.key = key
+
+    def fake_embed(texts):
+        vecs = {
+            "Verify user login": [1.0, 0.0, 0.0],
+            "Test payment processing": [0.0, 0.0, 1.0],
+        }
+        return [vecs.get(t, [0.0, 0.0, 0.0]) for t in texts]
+
+    candidates = [(Issue("T-2"), "Test payment processing")]
+    result = find_semantic_match("Verify user login", candidates, fake_embed, threshold=0.5)
+    assert result is None
+
+
+def test_find_semantic_match_handles_embed_error():
+    class Issue:
+        def __init__(self, key):
+            self.key = key
+
+    def broken_embed(texts):
+        raise RuntimeError("Model not loaded")
+
+    candidates = [(Issue("T-1"), "some summary")]
+    result = find_semantic_match("target", candidates, broken_embed)
+    assert result is None

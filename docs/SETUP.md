@@ -339,7 +339,7 @@ All environment variables are optional — sensible defaults are built in. Set t
 |----------|---------|-------------|
 | `QA_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | SentenceTransformer model for document embeddings |
 
-### Xray (Optional)
+### Xray and Duplicate Detection
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -349,6 +349,8 @@ All environment variables are optional — sensible defaults are built in. Set t
 | `XRAY_CLOUD_CLIENT_SECRET` | (none) | Xray Cloud API client secret |
 | `XRAY_CLOUD_BASE_URL` | (none) | Xray Cloud API base URL |
 | `XRAY_STEP_PUSH_MODE` | (none) | How test steps are pushed to Xray |
+
+> **Duplicate detection** uses a two-pass strategy: (1) exact normalized match (casefold + whitespace collapse), (2) semantic similarity using the same sentence-transformer embedding model (`all-MiniLM-L6-v2`) with a default cosine similarity threshold of **0.80** (80%). This threshold is defined in `backend/app/services/xray_duplicate.py` as `SEMANTIC_SIMILARITY_THRESHOLD` and can be adjusted to be more or less strict. The UI shows "Duplicate" for exact matches and "Similar (N%)" for semantic matches.
 
 ---
 

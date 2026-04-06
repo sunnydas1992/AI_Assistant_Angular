@@ -154,7 +154,7 @@ flowchart TB
 | `/config`          | ConfigComponent  | Jira/Confluence/AWS configuration; Initialize; Advanced settings (model, etc.). |
 | `/knowledge-base`  | KnowledgeBaseComponent | Populate KB from tickets, Confluence URLs, uploads.                 |
 | `/ticket-analyzer` | TicketAnalyzerComponent | Load tickets, chat with AI, quick actions, model selection.         |
-| `/test-cases`      | TestCasesComponent     | Generate test cases (with optional instructions), refine all/one, **confidence-score guardrail** (low-confidence cases require human approval before publishing), **Check Xray for duplicates**, publish to Xray (skips duplicate summaries by default), export. |
+| `/test-cases`      | TestCasesComponent     | Generate test cases (with optional instructions), refine all/one, **confidence-score guardrail** (low-confidence cases require human approval before publishing), **Check Xray for duplicates** (exact + semantic similarity with match-type/score badges), publish to Xray (skips duplicates by default), export. |
 | `/test-plan`       | TestPlanComponent      | Generate/refine test plan, publish to Confluence.                      |
 
 All except `/config` are protected by `initGuard`.
@@ -168,7 +168,7 @@ All except `/config` are protected by `initGuard`.
 ### 2.4 Data flow (frontend)
 
 - **Config**: User enters credentials and AWS profile → `POST /api/init` → on success, `InitService.setInitialized(true)` and success popup; model list refreshed.
-- **Test cases**: User can set “Instructions for generation” → Generate calls `POST /api/test-cases/generate` with `user_instructions`; results shown as editable items. Each test case receives an AI **confidence score** (1-5); cases with confidence below 3 are flagged **Needs Review** and blocked from publishing until the user explicitly approves them (human-in-the-loop guardrail). “Apply feedback to all” → `POST /api/test-cases/refine`; “Apply feedback” on one item → `POST /api/test-cases/refine-single`. **Check Xray for duplicates** → `POST /api/test-cases/check-xray-duplicates` (Jira search by comparable summary). Publish uses `write-to-xray` or `write-to-xray-selected` with `skip_if_duplicate` (default true) so existing Tests with the same normalized summary are not recreated. Jira browse links use `GET /api/connection-settings` for `jira_server`.
+- **Test cases**: User can set “Instructions for generation” → Generate calls `POST /api/test-cases/generate` with `user_instructions`; results shown as editable items. Each test case receives an AI **confidence score** (1-5); cases with confidence below 3 are flagged **Needs Review** and blocked from publishing until the user explicitly approves them (human-in-the-loop guardrail). “Apply feedback to all” → `POST /api/test-cases/refine`; “Apply feedback” on one item → `POST /api/test-cases/refine-single`. **Check Xray for duplicates** → `POST /api/test-cases/check-xray-duplicates` — two-pass detection: (1) exact normalized match, (2) semantic similarity via sentence embeddings (cosine ≥ 80%). Response includes `match_type` (`"exact"` / `"semantic"`) and `similarity` score; UI shows "Duplicate" or "Similar (N%)" badges accordingly. Publish uses `write-to-xray` or `write-to-xray-selected` with `skip_if_duplicate` (default true) — both exact and semantic duplicates are skipped. Jira browse links use `GET /api/connection-settings` for `jira_server`.
 - **Ticket analyzer**: Model list from `GET /api/bedrock-models` (no params so backend uses session config); default model from `GET /api/init-status` → `current_model_id`.
 
 ---
@@ -221,13 +221,18 @@ Blocking work (LLM calls, ChromaDB, Jira/Confluence/Bedrock I/O) is run in the *
   - **Knowledge base**: `populate_vector_db(ticket_ids, confluence_urls, files)` → fetch content, chunk, embed, store in ChromaDB. `clear_kb()`, `collection.count()`.
   - **Test cases**: `generate_test_cases(ticket_id, output_format, use_knowledge_base, source_type, user_instructions)` → fetches requirement from Jira or Confluence, builds prompt with context (and optional user instructions), invokes LLM, returns raw text. `parse_test_cases(text, output_format)` → list of `{id, title, content, confidence?}`. `refine_test_cases(current_tests, output_format, feedback)` and `refine_single_test_case(test_case, output_format, feedback)` for refinement.
   - **Test plan**: `generate_test_plan(...)`, `refine_test_plan(current_plan, feedback)`, `publish_test_plan_to_confluence(...)`.
-  - **Xray**: `bulk_create_xray_tests(payload, project_key, output_format, skip_if_duplicate)` via AtlassianService; `check_xray_duplicates`, `find_existing_xray_test` for Jira lookup before create.
+  - **Xray**: `bulk_create_xray_tests(payload, project_key, output_format, skip_if_duplicate)` via AtlassianService; `check_xray_duplicates`, `find_existing_xray_test` for Jira lookup before create. Passes the shared `embed_fn` from `EmbeddingService` for semantic similarity matching when exact match fails.
 
 ### 4.2 AtlassianService
 
 - **Role**: Jira and Confluence API access; Xray test creation and duplicate detection.
 - **Uses**: `jira` library, `atlassian-python-api` (Confluence).
-- **Capabilities**: Jira ticket details, Confluence page content, add comment, create Xray test issues (summary aligned with **`app/services/xray_duplicate.py`** — `extract_xray_comparable_summary`: BDD uses `title`, Xray format uses `**Test Summary:**` else `title`), **find_existing_xray_test** (JQL + normalized summary match; tie-break oldest `created`), **check_xray_duplicates** (batch). Issue type name defaults to `Test`; override with env **`XRAY_TEST_ISSUE_TYPE_NAME`** (see `AtlassianConfig`). Pure helpers in `xray_duplicate.py` are unit-tested in `backend/tests/test_xray_duplicate.py`.
+- **Capabilities**: Jira ticket details, Confluence page content, add comment, create Xray test issues (summary aligned with **`app/services/xray_duplicate.py`** — `extract_xray_comparable_summary`: BDD uses `title`, Xray format uses `**Test Summary:**` else `title`).
+- **Duplicate detection** (`find_existing_xray_test`): Two-pass strategy applied in order:
+  1. **Pass 1 — Exact normalized match**: JQL narrows candidates, then casefold + whitespace-collapse comparison. Tie-break picks oldest `created`.
+  2. **Pass 2 — Semantic similarity**: If no exact match and the shared `EmbeddingService` is available, candidate summaries are embedded alongside the target using the same sentence-transformer model (`all-MiniLM-L6-v2`). Cosine similarity ≥ 80% (configurable via `SEMANTIC_SIMILARITY_THRESHOLD` in `xray_duplicate.py`) flags a match, returning the match type (`"exact"` or `"semantic"`) and similarity score.
+- **`check_xray_duplicates`** (batch) and **`bulk_create_xray_tests`** (with `skip_if_duplicate`) both propagate `embed_fn` for semantic checks.
+- Issue type name defaults to `Test`; override with env **`XRAY_TEST_ISSUE_TYPE_NAME`** (see `AtlassianConfig`). Pure helpers in `xray_duplicate.py` are unit-tested in `backend/tests/test_xray_duplicate.py`.
 
 ### 4.3 AWSBedrockService
 

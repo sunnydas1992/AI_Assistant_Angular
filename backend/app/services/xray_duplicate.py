@@ -4,17 +4,27 @@ Xray / Jira Test duplicate detection helpers.
 Comparable summary rules (must stay aligned with AtlassianService.create_xray_test):
 - Xray Jira Test Format: **Test Summary:** from content, else title.
 - BDD (Gherkin): scenario title only.
+
+Matching strategy (applied in order):
+1. Exact normalized match (casefold + whitespace collapse).
+2. Semantic similarity via sentence embeddings (cosine similarity >= threshold).
 """
 
 from __future__ import annotations
 
+import logging
+import math
 import re
 import unicodedata
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.services.xray_manual_fields import extract_inline_test_summary
 
+logger = logging.getLogger(__name__)
+
 LiteralFormat = str  # 'BDD (Gherkin)' | 'Xray Jira Test Format'
+
+SEMANTIC_SIMILARITY_THRESHOLD = 0.80
 
 
 def extract_xray_comparable_summary(test_case: Dict[str, Any], output_format: str) -> str:
@@ -84,3 +94,62 @@ def tiebreak_duplicate_issues(issues: List[Any]) -> Any:
         return str(c)
 
     return sorted(issues, key=created_ts)[0]
+
+
+# ---------------------------------------------------------------------------
+# Semantic similarity helpers
+# ---------------------------------------------------------------------------
+
+def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    """Compute cosine similarity between two vectors without requiring numpy."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def find_semantic_match(
+    target_summary: str,
+    candidates: List[Tuple[Any, str]],
+    embed_fn: Callable[[List[str]], List[List[float]]],
+    threshold: float = SEMANTIC_SIMILARITY_THRESHOLD,
+) -> Optional[Tuple[Any, float]]:
+    """
+    Find the best semantic match for *target_summary* among Jira issue *candidates*.
+
+    Args:
+        target_summary: The generated test case summary to match.
+        candidates: List of (jira_issue, raw_summary_string) tuples from JQL results.
+        embed_fn: A function that accepts a list of strings and returns a list of embedding vectors.
+        threshold: Minimum cosine similarity to consider a match.
+
+    Returns:
+        (best_issue, similarity_score) if a match >= threshold is found, else None.
+    """
+    if not target_summary or not candidates:
+        return None
+
+    candidate_summaries = [s for _, s in candidates]
+    all_texts = [target_summary] + candidate_summaries
+
+    try:
+        embeddings = embed_fn(all_texts)
+    except Exception as e:
+        logger.warning("Semantic embedding failed, skipping similarity check: %s", e)
+        return None
+
+    target_vec = embeddings[0]
+    best_score = 0.0
+    best_issue = None
+
+    for i, (issue, _) in enumerate(candidates):
+        score = _cosine_similarity(target_vec, embeddings[i + 1])
+        if score > best_score:
+            best_score = score
+            best_issue = issue
+
+    if best_score >= threshold and best_issue is not None:
+        return best_issue, round(best_score, 3)
+    return None

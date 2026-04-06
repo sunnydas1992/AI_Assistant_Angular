@@ -337,13 +337,22 @@ class JiraRAG:
         """Create a test in Jira Xray (delegates to AtlassianService)."""
         return self.atlassian.create_xray_test(test_case, project_key, output_format)
 
+    @property
+    def _embed_fn(self):
+        """Return the shared embedding function for semantic duplicate matching, or None."""
+        if self._shared_embedding_function is not None:
+            return self._shared_embedding_function.embed_documents
+        return None
+
     def find_existing_xray_test(
         self,
         project_key: str,
         test_case: dict,
         output_format: str,
-    ) -> Optional[str]:
-        return self.atlassian.find_existing_xray_test(project_key, test_case, output_format)
+    ) -> dict:
+        return self.atlassian.find_existing_xray_test(
+            project_key, test_case, output_format, embed_fn=self._embed_fn,
+        )
 
     def check_xray_duplicates(
         self,
@@ -351,7 +360,9 @@ class JiraRAG:
         test_cases: List[dict],
         output_format: str,
     ) -> List[dict]:
-        return self.atlassian.check_xray_duplicates(project_key, test_cases, output_format)
+        return self.atlassian.check_xray_duplicates(
+            project_key, test_cases, output_format, embed_fn=self._embed_fn,
+        )
 
     def bulk_create_xray_tests(
         self,
@@ -362,7 +373,8 @@ class JiraRAG:
     ) -> dict:
         """Returns ``created_keys`` and ``skipped_duplicates``."""
         return self.atlassian.bulk_create_xray_tests(
-            test_cases, project_key, output_format, skip_if_duplicate
+            test_cases, project_key, output_format, skip_if_duplicate,
+            embed_fn=self._embed_fn,
         )
     
     def publish_test_plan_to_confluence(self, space_key: str, title: str, markdown_body: str) -> str:

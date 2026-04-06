@@ -17,6 +17,7 @@ from app.config.settings import AtlassianConfig
 from app.services.xray_duplicate import (
     escape_jql_string,
     extract_xray_comparable_summary,
+    find_semantic_match,
     normalize_xray_summary_for_match,
     pick_jql_summary_token,
     tiebreak_duplicate_issues,
@@ -469,58 +470,92 @@ class AtlassianService:
         project_key: str,
         test_case: Dict[str, Any],
         output_format: str,
-    ) -> Optional[str]:
+        embed_fn=None,
+    ) -> Dict[str, Any]:
         """
-        Return an existing Jira Test issue key in the project whose summary matches the comparable
-        summary (normalized), or None. On JQL/API errors, logs and returns None.
+        Return a dict describing any existing duplicate Jira Test in the project.
+
+        Matching strategy (applied in order):
+        1. Exact normalized match (casefold + whitespace collapse).
+        2. Semantic similarity via embeddings (if *embed_fn* is provided).
+
+        Returns: ``{"key": str|None, "similarity": float|None, "match_type": "exact"|"semantic"|None}``
         """
+        empty = {"key": None, "similarity": None, "match_type": None}
         if not self.jira_client:
-            return None
+            return empty
         pk = (project_key or "").strip().upper()
         if not pk:
-            return None
+            return empty
         eff = effective_xray_publish_format(test_case.get("content") or "", output_format)
         comparable = extract_xray_comparable_summary(test_case, eff)
         target_norm = normalize_xray_summary_for_match(comparable)
         if not target_norm:
-            return None
+            return empty
         token = pick_jql_summary_token(comparable)
         if not token:
-            return None
+            return empty
         esc_token = escape_jql_string(token)
         jql = f"project = {pk} AND {self._jql_issuetype_predicate()} AND summary ~ \"{esc_token}\""
         try:
             issues = self.jira_client.search_issues(jql, maxResults=50, fields="summary,created")
         except Exception as e:
             logger.warning("find_existing_xray_test JQL failed: %s", e)
-            return None
-        matches: List[Any] = []
+            return empty
+
+        # --- Pass 1: exact normalized match ---
+        exact_matches: List[Any] = []
         for issue in issues:
             raw = getattr(issue.fields, "summary", None) or ""
             if normalize_xray_summary_for_match(raw) == target_norm:
-                matches.append(issue)
-        if not matches:
-            return None
-        return tiebreak_duplicate_issues(matches).key
+                exact_matches.append(issue)
+        if exact_matches:
+            return {
+                "key": tiebreak_duplicate_issues(exact_matches).key,
+                "similarity": 1.0,
+                "match_type": "exact",
+            }
+
+        # --- Pass 2: semantic similarity (if embedding function available) ---
+        if embed_fn and issues:
+            candidates = [
+                (issue, getattr(issue.fields, "summary", None) or "")
+                for issue in issues
+            ]
+            result = find_semantic_match(
+                comparable, candidates, embed_fn,
+            )
+            if result:
+                matched_issue, score = result
+                return {
+                    "key": matched_issue.key,
+                    "similarity": score,
+                    "match_type": "semantic",
+                }
+
+        return empty
 
     def check_xray_duplicates(
         self,
         project_key: str,
         test_cases: List[Dict[str, Any]],
         output_format: str,
+        embed_fn=None,
     ) -> List[Dict[str, Any]]:
         """One result dict per input test case (same order)."""
         out: List[Dict[str, Any]] = []
         for tc in test_cases:
             eff = effective_xray_publish_format(tc.get("content") or "", output_format)
             summary_used = extract_xray_comparable_summary(tc, eff)
-            existing = self.find_existing_xray_test(project_key, tc, output_format)
+            match = self.find_existing_xray_test(project_key, tc, output_format, embed_fn=embed_fn)
             out.append(
                 {
                     "id": tc.get("id"),
-                    "is_duplicate": existing is not None,
-                    "existing_issue_key": existing,
+                    "is_duplicate": match["key"] is not None,
+                    "existing_issue_key": match["key"],
                     "summary_used": summary_used,
+                    "similarity": match["similarity"],
+                    "match_type": match["match_type"],
                 }
             )
         return out
@@ -531,6 +566,7 @@ class AtlassianService:
         project_key: str,
         output_format: str = "Xray Jira Test Format",
         skip_if_duplicate: bool = False,
+        embed_fn=None,
     ) -> Dict[str, Any]:
         """
         Returns ``created_keys`` and ``skipped_duplicates`` (existing_issue_key + summary_used per skip).
@@ -539,17 +575,19 @@ class AtlassianService:
         skipped_duplicates: List[Dict[str, Any]] = []
         for test_case in test_cases:
             if skip_if_duplicate:
-                existing = self.find_existing_xray_test(project_key, test_case, output_format)
-                if existing:
+                match = self.find_existing_xray_test(project_key, test_case, output_format, embed_fn=embed_fn)
+                if match["key"]:
                     skipped_duplicates.append(
                         {
-                            "existing_issue_key": existing,
+                            "existing_issue_key": match["key"],
                             "summary_used": extract_xray_comparable_summary(
                                 test_case,
                                 effective_xray_publish_format(
                                     test_case.get("content") or "", output_format
                                 ),
                             ),
+                            "similarity": match["similarity"],
+                            "match_type": match["match_type"],
                         }
                     )
                     continue
