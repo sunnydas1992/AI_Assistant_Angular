@@ -1430,7 +1430,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     }).subscribe({
         next: (res: unknown) => {
         this.refiningId = null;
-        const r = res as { refined_content?: string };
+        const r = res as { refined_content?: string; confidence?: number };
         if (r?.refined_content != null) {
           tc.previousContent = snapshot;
           tc.showDiff = true;
@@ -1442,6 +1442,10 @@ export class TestCasesComponent implements OnInit, OnDestroy {
           tc.existingXrayKey = undefined;
           tc.summaryUsed = undefined;
           tc.quality = undefined;
+          if (r.confidence != null) {
+            tc.confidence = r.confidence;
+            tc.approved = r.confidence >= CONFIDENCE_APPROVAL_THRESHOLD;
+          }
           this.toast.success('Test case updated.');
         }
       },

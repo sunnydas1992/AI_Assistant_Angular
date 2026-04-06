@@ -462,7 +462,7 @@ class JiraRAG:
         """
         return self.test_parser.parse(test_cases_text, output_format)
     
-    def refine_single_test_case(self, test_case: str, output_format: str, feedback: str) -> str:
+    def refine_single_test_case(self, test_case: str, output_format: str, feedback: str) -> dict:
         """
         Refine a single test case based on user feedback.
         
@@ -472,10 +472,10 @@ class JiraRAG:
             feedback: User feedback for refinement
             
         Returns:
-            Refined test case content
+            Dict with 'refined_content' and optional 'confidence' score
         """
         if not self.llm:
-            return test_case
+            return {"refined_content": test_case, "confidence": None}
         
         prompt = PromptTemplate(
             template=PromptTemplates.SINGLE_TEST_CASE_REFINEMENT,
@@ -483,7 +483,35 @@ class JiraRAG:
         )
         
         refine_chain = prompt | self.llm | StrOutputParser()
-        return refine_chain.invoke({"test_case": test_case, "feedback": feedback})
+        raw = refine_chain.invoke({"test_case": test_case, "feedback": feedback})
+
+        content, confidence, reason = self._extract_single_confidence(raw)
+        return {
+            "refined_content": content,
+            "confidence": confidence,
+            "confidence_reason": reason,
+        }
+
+    @staticmethod
+    def _extract_single_confidence(raw: str):
+        """Extract a trailing CONFIDENCE: N (reason) line from single-test refinement output."""
+        pattern = re.compile(
+            r'(?m)^\s*\*{0,2}\s*CONFIDENCE\s*:?\s*\*{0,2}\s*:?\s*(\d)\s*(?:\(([^)]*)\))?\s*$'
+        )
+        lines = raw.rstrip().split('\n')
+        confidence = None
+        reason = None
+        cut_index = len(lines)
+        for i in range(len(lines) - 1, max(len(lines) - 6, -1), -1):
+            m = pattern.match(lines[i])
+            if m:
+                score = int(m.group(1))
+                confidence = max(1, min(5, score))
+                reason = (m.group(2) or "").strip() or None
+                cut_index = i
+                break
+        content = '\n'.join(lines[:cut_index]).rstrip()
+        return content, confidence, reason
 
     def review_test_case_quality(self, title: str, content: str, output_format: str) -> Dict[str, Any]:
         """Score a single test case on clarity, completeness, edge_cases, structure (1–5 each + overall)."""

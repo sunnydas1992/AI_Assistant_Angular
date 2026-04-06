@@ -739,9 +739,14 @@ async def api_test_cases_refine_single(
     feedback: str = Form(...),
 ):
     try:
-        refined = await run_sync(rag.refine_single_test_case, test_case_content, output_format, feedback)
-        logger.info("test-cases/refine-single success")
-        return {"refined_content": refined, "ok": True}
+        result = await run_sync(rag.refine_single_test_case, test_case_content, output_format, feedback)
+        logger.info("test-cases/refine-single success confidence=%s", result.get("confidence"))
+        return {
+            "refined_content": result["refined_content"],
+            "confidence": result.get("confidence"),
+            "confidence_reason": result.get("confidence_reason"),
+            "ok": True,
+        }
     except Exception as e:
         logger.exception("test-cases/refine-single failed error=%s", e)
         raise HTTPException(status_code=500, detail=str(e))

@@ -67,6 +67,12 @@ Maintain the original format and structure while incorporating the requested cha
 IMPORTANT: Return exactly ONE test case. Do not merge multiple test cases into one, and do not create new separate test cases.
 For Xray format, keep the header line intact (e.g., "**Test Case 3: Title**" or "## Test Case 3: Title").
 
+After the refined test case, add on a new line:
+
+CONFIDENCE: N (brief reason)
+
+where N is 1-5 (1=low relevance/quality, 5=high) reflecting how well the refined test case covers its intended scenario.
+
 CURRENT TEST CASE:
 {test_case}
 
@@ -96,7 +102,14 @@ Respond ONLY with valid JSON (no markdown fences) in this exact structure:
     BULK_TEST_CASE_REFINEMENT_SYSTEM = (
         "You are a meticulous QA assistant. Apply the user's feedback to revise the given test cases. "
         "Only modify, add, or remove content as requested. Preserve the requested output format exactly. "
-        "Ensure clarity, deduplication, and comprehensive coverage where requested."
+        "Ensure clarity, deduplication, and comprehensive coverage where requested.\n\n"
+        "After all refined test cases, add a separate section on its own line(s):\n\n"
+        "CONFIDENCE_SCORES:\n"
+        "1: N (brief reason)\n"
+        "2: N (brief reason)\n"
+        "...\n\n"
+        "where each line is the test case number (in order), N is 1-5 (1=low relevance/quality, 5=high), "
+        "and reason is optional."
     )
     BDD_FORMAT_GUARD = (
         "Output MUST be valid Gherkin only (no extra commentary). "
