@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
@@ -184,12 +184,10 @@ export interface TestCaseItem {
                 @if (checkingXrayDuplicates) { <span class="loading-spinner"></span> }
                 Check Xray for Duplicates
               </button>
-              <button class="secondary" (click)="writeToXray()" [disabled]="writingToXray || !xrayProjectKey.trim()">
-                @if (writingToXray) { <span class="loading-spinner"></span> }
+              <button class="secondary" (click)="openPublishReview('all')" [disabled]="writingToXray || !xrayProjectKey.trim()">
                 Publish All to Xray
               </button>
-              <button class="primary" (click)="publishSelected()" [disabled]="writingToXray || !xrayProjectKey.trim() || selectedPublishableCount === 0">
-                @if (writingToXray) { <span class="loading-spinner"></span> }
+              <button class="primary" (click)="openPublishReview('selected')" [disabled]="writingToXray || !xrayProjectKey.trim() || selectedPublishableCount === 0">
                 Publish Selected ({{ selectedPublishableCount }}) to Jira
               </button>
             </div>
@@ -243,13 +241,8 @@ export interface TestCaseItem {
               <button type="button" class="icon-btn tc-delete-btn" (click)="removeTestCase(tc)" title="Delete this test case" aria-label="Delete">×</button>
             </div>
             <div class="tc-content-wrap">
-              @if (editingTcId === tc.id) {
-                <textarea class="tc-content-edit" [(ngModel)]="tc.content" placeholder="Test case content (editable)" rows="6"></textarea>
-                <button type="button" class="link-btn tc-view-toggle" (click)="editingTcId = null">Show Preview</button>
-              } @else {
-                <div class="tc-content-preview" [innerHTML]="formatContent(tc.content)"></div>
-                <button type="button" class="link-btn tc-view-toggle" (click)="editingTcId = tc.id">Edit Content</button>
-              }
+              <div class="tc-content-preview" [innerHTML]="formatContent(tc.content)"></div>
+              <button type="button" class="link-btn tc-view-toggle" (click)="openEditOverlay(tc)">Edit Content</button>
             </div>
             @if (tc.previousContent) {
               <div class="tc-diff-section">
@@ -286,6 +279,95 @@ export interface TestCaseItem {
         @if (xrayMessage) {
           <div class="message" [class.success]="xrayOk" [class.error]="!xrayOk">{{ xrayMessage }}</div>
         }
+      </div>
+    }
+
+    <!-- Edit Content Overlay -->
+    @if (editOverlayTc) {
+      <div class="overlay-backdrop" (click)="cancelEditOverlay()">
+        <div class="overlay-panel overlay-panel--edit" (click)="$event.stopPropagation()">
+          <div class="overlay-header">
+            <h2 class="overlay-title">Edit Test Case #{{ editOverlayIndex }}</h2>
+            <button type="button" class="overlay-close" (click)="cancelEditOverlay()" aria-label="Close">&times;</button>
+          </div>
+          <div class="edit-overlay-body">
+            <div class="edit-title-section">
+              <span class="form-section-label">Title</span>
+              <input class="edit-title-input" [(ngModel)]="editOverlayTc.title" placeholder="Test case title" />
+            </div>
+            <div class="edit-columns">
+              <div class="edit-col">
+                <span class="form-section-label">Content</span>
+                <textarea class="edit-content-textarea" [(ngModel)]="editOverlayTc.content" placeholder="Test case content" rows="18"></textarea>
+              </div>
+              <div class="edit-col">
+                <span class="form-section-label">Preview</span>
+                <div class="tc-content-preview edit-preview-pane" [innerHTML]="formatContent(editOverlayTc.content)"></div>
+              </div>
+            </div>
+          </div>
+          <div class="overlay-footer">
+            <button type="button" class="secondary" (click)="cancelEditOverlay()">Cancel</button>
+            <button type="button" class="primary" (click)="saveEditOverlay()">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- Publish Review Overlay -->
+    @if (publishReviewOpen) {
+      <div class="overlay-backdrop" (click)="cancelPublishReview()">
+        <div class="overlay-panel overlay-panel--publish" (click)="$event.stopPropagation()">
+          <div class="overlay-header">
+            <h2 class="overlay-title">Review Before Publishing</h2>
+            <button type="button" class="overlay-close" (click)="cancelPublishReview()" aria-label="Close">&times;</button>
+          </div>
+          <div class="publish-overlay-body">
+            <p class="publish-summary">
+              <strong>{{ publishReviewItems.length }}</strong> test case{{ publishReviewItems.length === 1 ? '' : 's' }}
+              will be published to project <strong>{{ xrayProjectKey }}</strong>.
+              Remove any you do not want to publish.
+            </p>
+            @if (publishReviewItems.length === 0) {
+              <p class="publish-empty">No test cases remaining. Add test cases back or cancel.</p>
+            }
+            <div class="publish-list">
+              @for (tc of publishReviewItems; track tc.id; let i = $index) {
+                <div class="publish-row">
+                  <div class="publish-row-header">
+                    <span class="publish-row-num">#{{ i + 1 }}</span>
+                    <span class="publish-row-title">{{ tc.title }}</span>
+                    @if (tc.confidence !== undefined) {
+                      <span class="confidence" [class.confidence-low]="tc.confidence < 3">{{ tc.confidence }}/5</span>
+                    }
+                    @if (tc.quality) {
+                      <span
+                        class="quality-badge"
+                        [class.quality-high]="tc.quality.overall >= 4"
+                        [class.quality-mid]="tc.quality.overall === 3"
+                        [class.quality-low]="tc.quality.overall <= 2"
+                      >Q: {{ tc.quality.overall }}/5</span>
+                    }
+                    <button type="button" class="link-btn publish-row-toggle" (click)="publishReviewExpandedId = publishReviewExpandedId === tc.id ? null : tc.id">
+                      {{ publishReviewExpandedId === tc.id ? 'Hide' : 'Preview' }}
+                    </button>
+                    <button type="button" class="icon-btn tc-delete-btn" (click)="removeFromPublishReview(tc)" title="Remove from publish" aria-label="Remove">&times;</button>
+                  </div>
+                  @if (publishReviewExpandedId === tc.id) {
+                    <div class="tc-content-preview publish-row-preview" [innerHTML]="formatContent(tc.content)"></div>
+                  }
+                </div>
+              }
+            </div>
+          </div>
+          <div class="overlay-footer">
+            <button type="button" class="secondary" (click)="cancelPublishReview()">Cancel</button>
+            <button type="button" class="primary" (click)="confirmPublish()" [disabled]="publishReviewItems.length === 0 || writingToXray">
+              @if (writingToXray) { <span class="loading-spinner"></span> }
+              {{ writingToXray ? 'Publishing…' : 'Confirm and Publish (' + publishReviewItems.length + ')' }}
+            </button>
+          </div>
+        </div>
       </div>
     }
 
@@ -531,9 +613,89 @@ export interface TestCaseItem {
     .tc-diff-content .diff-del { background: rgba(220, 38, 38, 0.15); text-decoration: line-through; }
     .tc-diff-content .diff-ins { background: rgba(22, 163, 74, 0.15); }
 
+    /* ---- Shared overlay styles ---- */
+    .overlay-backdrop {
+      position: fixed; inset: 0; z-index: 900;
+      background: var(--app-overlay-bg, rgba(18, 22, 48, 0.92));
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      animation: overlayFadeIn 0.25s ease both;
+    }
+    @keyframes overlayFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .overlay-panel {
+      background: var(--app-card-bg); border-radius: var(--radius-lg, 10px);
+      box-shadow: 0 12px 48px rgba(0,0,0,0.25); border: 1px solid var(--app-card-border);
+      display: flex; flex-direction: column; max-height: 90vh;
+      animation: overlaySlideIn 0.3s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    @keyframes overlaySlideIn {
+      from { opacity: 0; transform: translateY(20px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .overlay-panel--edit { width: 92vw; max-width: 960px; }
+    .overlay-panel--publish { width: 92vw; max-width: 1040px; }
+    .overlay-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--app-card-border);
+      flex-shrink: 0;
+    }
+    .overlay-title { font-size: 1.1rem; margin: 0; color: var(--app-text); }
+    .overlay-close {
+      background: none; border: none; font-size: 1.5rem; line-height: 1;
+      cursor: pointer; color: var(--app-text-muted); padding: 0.2rem 0.5rem;
+      border-radius: 4px; transition: color 0.15s, background 0.15s;
+    }
+    .overlay-close:hover { color: var(--app-text); background: rgba(82,161,255,0.12); }
+    .overlay-footer {
+      display: flex; align-items: center; justify-content: flex-end; gap: 0.75rem;
+      padding: 0.85rem 1.25rem; border-top: 1px solid var(--app-card-border);
+      flex-shrink: 0;
+    }
+
+    /* ---- Edit overlay ---- */
+    .edit-overlay-body { padding: 1rem 1.25rem; overflow-y: auto; flex: 1; min-height: 0; }
+    .edit-title-section { margin-bottom: 1rem; }
+    .edit-title-input {
+      width: 100%; font-weight: 600; font-size: 1rem; padding: 0.4rem 0.6rem;
+      border-radius: 6px; border: 1px solid var(--app-input-border);
+      background: var(--app-input-bg); color: var(--app-text);
+    }
+    .edit-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 700px) { .edit-columns { grid-template-columns: 1fr; } }
+    .edit-col { min-width: 0; display: flex; flex-direction: column; }
+    .edit-content-textarea {
+      flex: 1; min-height: 320px; resize: vertical; font-family: inherit;
+      font-size: 0.9rem; line-height: 1.55; padding: 0.6rem;
+      border-radius: 6px; border: 1px solid var(--app-input-border);
+      background: var(--app-input-bg); color: var(--app-text);
+    }
+    .edit-preview-pane {
+      flex: 1; min-height: 320px; overflow-y: auto;
+      margin-top: 0; padding: 0.75rem;
+    }
+
+    /* ---- Publish review overlay ---- */
+    .publish-overlay-body { padding: 1rem 1.25rem; overflow-y: auto; flex: 1; min-height: 0; }
+    .publish-summary { font-size: 0.92rem; color: var(--app-text-muted); margin: 0 0 1rem; }
+    .publish-empty { font-size: 0.9rem; color: var(--app-text-muted); text-align: center; padding: 2rem 0; }
+    .publish-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .publish-row {
+      background: var(--app-surface-muted); border: 1px solid var(--app-card-border);
+      border-radius: 8px; padding: 0.65rem 0.85rem;
+      animation: tcItemEnter 0.25s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    .publish-row-header {
+      display: flex; align-items: center; gap: 0.5rem 0.75rem; flex-wrap: wrap;
+    }
+    .publish-row-num { font-size: 0.78rem; font-weight: 700; color: var(--app-text-muted); min-width: 2rem; }
+    .publish-row-title { flex: 1; min-width: 0; font-weight: 600; font-size: 0.92rem; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .publish-row-toggle { font-size: 0.82rem; flex-shrink: 0; }
+    .publish-row-preview { margin-top: 0.5rem; max-height: 200px; overflow-y: auto; font-size: 0.82rem; }
+
     @media (max-width: 600px) {
       .form-grid { grid-template-columns: 1fr; }
       .results-toolbar { flex-direction: column; align-items: flex-start; }
+      .overlay-panel--edit, .overlay-panel--publish { width: 98vw; }
     }
   `],
 })
@@ -555,8 +717,12 @@ export class TestCasesComponent implements OnInit, OnDestroy {
   globalFeedback = '';
   refiningAll = false;
   refiningId: string | null = null;
-  /** When set, this test case shows the textarea; otherwise the formatted preview. */
-  editingTcId: string | null = null;
+  editOverlayTc: { id: string; title: string; content: string } | null = null;
+  editOverlayIndex = 0;
+  publishReviewOpen = false;
+  publishReviewItems: TestCaseItem[] = [];
+  publishReviewMode: 'all' | 'selected' = 'all';
+  publishReviewExpandedId: string | null = null;
   checkingXrayDuplicates = false;
   reviewingQuality = false;
   jiraServerUrl = '';
@@ -683,6 +849,136 @@ export class TestCasesComponent implements OnInit, OnDestroy {
         this.toast.error('Failed to switch model. Please try again or re-initialize from Configuration.');
       },
     });
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscapeKey(): void {
+    if (this.editOverlayTc) { this.cancelEditOverlay(); return; }
+    if (this.publishReviewOpen) { this.cancelPublishReview(); return; }
+  }
+
+  openEditOverlay(tc: TestCaseItem): void {
+    this.editOverlayIndex = this.items.indexOf(tc) + 1;
+    this.editOverlayTc = { id: tc.id, title: tc.title, content: tc.content };
+    document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  saveEditOverlay(): void {
+    if (!this.editOverlayTc) return;
+    const orig = this.items.find(t => t.id === this.editOverlayTc!.id);
+    if (orig) {
+      orig.title = this.editOverlayTc.title;
+      orig.content = this.editOverlayTc.content;
+      orig.duplicateChecked = false;
+      orig.isDuplicate = false;
+      orig.existingXrayKey = undefined;
+      orig.summaryUsed = undefined;
+      orig.quality = undefined;
+      this.toast.success('Test case updated.');
+    }
+    this.editOverlayTc = null;
+  }
+
+  cancelEditOverlay(): void {
+    this.editOverlayTc = null;
+  }
+
+  openPublishReview(mode: 'all' | 'selected'): void {
+    if (!this.xrayProjectKey.trim()) return;
+    if (mode === 'all') {
+      const unapproved = this.unapprovedCount;
+      if (unapproved > 0) {
+        this.toast.error(`${unapproved} test case${unapproved === 1 ? '' : 's'} need${unapproved === 1 ? 's' : ''} review. Approve all low-confidence cases before using "Publish all".`);
+        return;
+      }
+      this.publishReviewItems = this.items.map(tc => ({ ...tc }));
+    } else {
+      const selected = this.items.filter(tc => tc.selected && !tc.isDuplicate && tc.approved !== false);
+      if (selected.length === 0) {
+        const hasUnapproved = this.items.some(tc => tc.selected && tc.approved === false);
+        this.toast.error(
+          hasUnapproved
+            ? 'Some selected test cases need review. Approve low-confidence cases before publishing.'
+            : 'No publishable test cases selected.',
+        );
+        return;
+      }
+      this.publishReviewItems = selected.map(tc => ({ ...tc }));
+    }
+    this.publishReviewMode = mode;
+    this.publishReviewExpandedId = null;
+    this.publishReviewOpen = true;
+  }
+
+  removeFromPublishReview(tc: TestCaseItem): void {
+    this.publishReviewItems = this.publishReviewItems.filter(t => t.id !== tc.id);
+    if (this.publishReviewExpandedId === tc.id) this.publishReviewExpandedId = null;
+  }
+
+  confirmPublish(): void {
+    if (!this.publishReviewItems.length || this.writingToXray) return;
+    this.writingToXray = true;
+    this.xrayMessage = '';
+
+    const items = this.publishReviewItems;
+    const endpoint = this.publishReviewMode === 'all' ? '/test-cases/write-to-xray' : '/test-cases/write-to-xray-selected';
+    const contentText = items.map(tc => tc.content).join('\n\n');
+    const body = this.publishReviewMode === 'all'
+      ? {
+          output_text: items.map((tc, i) =>
+            this.outputFormat === 'Xray Jira Test Format'
+              ? `**Test Case ${i + 1}: ${tc.title}**\n**Test Summary:** ${tc.title}\n\n${tc.content}`
+              : `## ${tc.title}\n\n${tc.content}`
+          ).join('\n\n'),
+          output_format: this.effectivePublishOutputFormat(contentText),
+          project_key: this.xrayProjectKey.trim(),
+          skip_if_duplicate: true,
+        }
+      : {
+          project_key: this.xrayProjectKey.trim(),
+          output_format: this.effectivePublishOutputFormat(contentText),
+          test_cases: items.map(tc => ({ id: tc.id, title: tc.title, content: tc.content })),
+          skip_if_duplicate: true,
+        };
+
+    this.api.postJson<{
+      ok: boolean;
+      created_keys?: string[];
+      count?: number;
+      skipped_count?: number;
+      detail?: string;
+    }>(endpoint, body).subscribe({
+      next: (res) => {
+        this.writingToXray = false;
+        this.publishReviewOpen = false;
+        this.xrayOk = res?.ok ?? false;
+        const skipped = res?.skipped_count ?? 0;
+        if (res?.ok && res?.created_keys?.length) {
+          this.xrayMessage = `Published ${res.count} test(s) to Xray: ${res.created_keys.join(', ')}.`;
+          if (skipped > 0) this.xrayMessage += ` Skipped ${skipped} duplicate(s).`;
+          this.toast.success(`Published ${res.count} test(s) to Xray.${skipped > 0 ? ` Skipped ${skipped} duplicate(s).` : ''}`);
+        } else if (res?.ok) {
+          this.xrayMessage = skipped > 0 ? `No new tests created; skipped ${skipped} duplicate(s).` : 'Published to Xray.';
+          this.toast.success(skipped > 0 ? `No new issues created (${skipped} duplicate(s) skipped).` : 'Published to Xray.');
+        } else {
+          this.xrayMessage = res?.detail || 'Publish failed.';
+          this.toast.error(this.xrayMessage);
+        }
+      },
+      error: (err) => {
+        this.writingToXray = false;
+        this.publishReviewOpen = false;
+        this.xrayOk = false;
+        this.xrayMessage = err?.error?.detail || err?.message || 'Publish failed.';
+        this.toast.error(this.xrayMessage);
+      },
+    });
+  }
+
+  cancelPublishReview(): void {
+    this.publishReviewOpen = false;
+    this.publishReviewItems = [];
+    this.publishReviewExpandedId = null;
   }
 
   get aiBusyOpen(): boolean {
@@ -1152,120 +1448,6 @@ export class TestCasesComponent implements OnInit, OnDestroy {
       error: () => {
         this.refiningId = null;
         this.toast.error('Failed to refine test case.');
-      },
-    });
-  }
-
-  writeToXray(): void {
-    if (!this.xrayProjectKey.trim()) return;
-    const unapproved = this.unapprovedCount;
-    if (unapproved > 0) {
-      this.toast.error(`${unapproved} test case${unapproved === 1 ? '' : 's'} need${unapproved === 1 ? 's' : ''} review. Approve all low-confidence cases before using "Publish all".`);
-      return;
-    }
-    this.writingToXray = true;
-    this.xrayMessage = '';
-    const outputText = this.buildOutputText();
-    this.api.postJson<{
-      ok: boolean;
-      created_keys?: string[];
-      count?: number;
-      skipped_count?: number;
-      detail?: string;
-    }>('/test-cases/write-to-xray', {
-      output_text: outputText,
-      output_format: this.effectivePublishOutputFormat(outputText),
-      project_key: this.xrayProjectKey.trim(),
-      skip_if_duplicate: true,
-    }).subscribe({
-      next: (res) => {
-        this.writingToXray = false;
-        this.xrayOk = res?.ok ?? false;
-        const skipped = res?.skipped_count ?? 0;
-        if (res?.ok && res?.created_keys?.length) {
-          this.xrayMessage = `Created ${res.count} test(s) in Xray: ${res.created_keys.join(', ')}.`;
-          if (skipped > 0) {
-            this.xrayMessage += ` Skipped ${skipped} duplicate(s).`;
-          }
-          this.toast.success(`Published ${res.count} test(s) to Xray.${skipped > 0 ? ` Skipped ${skipped} duplicate(s).` : ''}`);
-        } else if (res?.ok) {
-          this.xrayMessage =
-            skipped > 0 ? `No new tests created; skipped ${skipped} duplicate(s).` : 'Published all to Xray.';
-          this.toast.success(
-            skipped > 0 ? `No new issues created (${skipped} duplicate(s) skipped).` : 'Published all to Xray.',
-          );
-        } else {
-          this.xrayMessage = res?.detail || 'Write to Xray failed.';
-          this.toast.error(this.xrayMessage);
-        }
-      },
-      error: (err) => {
-        this.writingToXray = false;
-        this.xrayOk = false;
-        this.xrayMessage = err?.error?.detail || err?.message || 'Write to Xray failed.';
-        this.toast.error(this.xrayMessage);
-      },
-    });
-  }
-
-  publishSelected(): void {
-    if (!this.xrayProjectKey.trim()) return;
-    const selected = this.items.filter(tc => tc.selected && !tc.isDuplicate && tc.approved !== false);
-    if (selected.length === 0) {
-      const hasUnapproved = this.items.some(tc => tc.selected && tc.approved === false);
-      this.toast.error(
-        hasUnapproved
-          ? 'Some selected test cases need review. Approve low-confidence cases before publishing.'
-          : 'No publishable test cases selected. Duplicates are excluded—deselect duplicate rows or run "Check Xray for duplicates" and choose other cases.',
-      );
-      return;
-    }
-    this.writingToXray = true;
-    this.xrayMessage = '';
-    this.api
-      .postJson<{
-        ok: boolean;
-        created_keys?: string[];
-        count?: number;
-        skipped_count?: number;
-        detail?: string;
-      }>('/test-cases/write-to-xray-selected', {
-        project_key: this.xrayProjectKey.trim(),
-        output_format: this.effectivePublishOutputFormat(
-          selected.map(tc => tc.content).join('\n\n'),
-        ),
-        test_cases: selected.map(tc => ({ id: tc.id, title: tc.title, content: tc.content })),
-        skip_if_duplicate: true,
-      })
-      .subscribe({
-      next: (res) => {
-        this.writingToXray = false;
-        this.xrayOk = res?.ok ?? false;
-        const skipped = res?.skipped_count ?? 0;
-        if (res?.ok && res?.created_keys?.length) {
-          this.xrayMessage = `Published ${res.count} test(s) to Xray: ${res.created_keys.join(', ')}.`;
-          if (skipped > 0) {
-            this.xrayMessage += ` Skipped ${skipped} duplicate(s).`;
-          }
-          this.toast.success(
-            `Published ${res.count} selected test(s) to Xray.${skipped > 0 ? ` Skipped ${skipped} duplicate(s).` : ''}`,
-          );
-        } else if (res?.ok) {
-          this.xrayMessage =
-            skipped > 0 ? `No new tests created; skipped ${skipped} duplicate(s).` : 'Published selected to Xray.';
-          this.toast.success(
-            skipped > 0 ? `No new issues created (${skipped} duplicate(s) skipped).` : 'Published selected to Xray.',
-          );
-        } else {
-          this.xrayMessage = res?.detail || 'Publish failed.';
-          this.toast.error(this.xrayMessage);
-        }
-      },
-      error: (err) => {
-        this.writingToXray = false;
-        this.xrayOk = false;
-        this.xrayMessage = err?.error?.detail || err?.message || 'Publish failed.';
-        this.toast.error(this.xrayMessage);
       },
     });
   }

@@ -27,14 +27,7 @@ import { ThemeService } from './theme.service';
       <aside class="sidebar">
         <div class="sidebar-shimmer" aria-hidden="true"></div>
         <a routerLink="/home" class="logo-block logo-link" title="Go to Home" aria-label="Hyland QA Assistant — Home">
-          <div class="logo-img-wrap">
-            <img src="assets/images/hyland-logo-horizontal.png"
-                 alt="Hyland"
-                 class="logo-img"
-                 (error)="$any($event.target).style.display='none'; $any($event.target).nextElementSibling?.classList.add('show')"
-                 />
-            <span class="logo-fallback">Hyland</span>
-          </div>
+          <span class="logo-wordmark">Hyland</span>
           <span class="logo-text">QA Assistant</span>
         </a>
 
@@ -205,29 +198,14 @@ import { ThemeService } from './theme.service';
       outline: 2px solid var(--hyland-teal, #13eac1);
       outline-offset: 2px;
     }
-    .logo-img-wrap {
-      position: relative;
-      min-height: 32px;
-      display: flex;
-      align-items: center;
-    }
-    .logo-img {
-      max-width: 120px;
-      max-height: 28px;
-      width: auto;
-      height: auto;
-      object-fit: contain;
-      display: block;
-    }
-    .logo-fallback {
-      display: none;
+    .logo-wordmark {
       font-family: var(--font-heading);
       font-weight: 800;
-      font-size: 1.1rem;
+      font-size: 1.35rem;
+      letter-spacing: 0.08em;
       color: var(--sidebar-logo-mark-color);
-      letter-spacing: 0.02em;
+      line-height: 1;
     }
-    .logo-fallback.show { display: inline-block; }
     .logo-text {
       font-family: var(--font-heading);
       font-weight: 800;
