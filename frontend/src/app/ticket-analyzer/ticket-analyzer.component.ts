@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ViewChild, ElementRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
@@ -146,12 +146,17 @@ interface TicketInfo {
               <strong>{{ msg.role === 'user' ? 'You' : 'Assistant' }}</strong>
               @if (msg.role === 'assistant') {
                 <div class="msg-content msg-content-md" [innerHTML]="formatMessageContent(msg.content)"></div>
-                @if (tickets.length && !msg.content.startsWith('Error:')) {
-                  <button type="button" class="link-btn post-jira-btn" (click)="postToJira(msg.content)">Post to Jira</button>
-                }
-                @if (msg.content.startsWith('Error:')) {
-                  <button type="button" class="link-btn" (click)="retryLastAction()">Retry</button>
-                }
+                <div class="msg-actions">
+                  <button type="button" class="link-btn copy-btn" (click)="copyToClipboard(msg.content, $index)">
+                    {{ copiedIndex === $index ? '✓ Copied' : 'Copy' }}
+                  </button>
+                  @if (tickets.length && !msg.content.startsWith('Error:')) {
+                    <button type="button" class="link-btn post-jira-btn" (click)="postToJira(msg.content)">Post to Jira</button>
+                  }
+                  @if (msg.content.startsWith('Error:')) {
+                    <button type="button" class="link-btn" (click)="retryLastAction()">Retry</button>
+                  }
+                </div>
               } @else {
                 <pre class="msg-content">{{ msg.content }}</pre>
               }
@@ -174,6 +179,41 @@ interface TicketInfo {
         }
       </main>
     </div>
+
+    <!-- Post to Jira Preview Overlay -->
+    @if (postToJiraOverlayOpen) {
+      <div class="overlay-backdrop" (click)="cancelPostToJira()">
+        <div class="overlay-panel overlay-panel--post-jira" (click)="$event.stopPropagation()">
+          <div class="overlay-header">
+            <h2 class="overlay-title">Post Comment to Jira</h2>
+            <button type="button" class="overlay-close" (click)="cancelPostToJira()" aria-label="Close">&times;</button>
+          </div>
+          <div class="overlay-body">
+            <p class="overlay-hint">Review and edit the comment before posting. It will be added to
+              @if (tickets.length === 1) {
+                <strong>{{ tickets[0].ticket_id }}</strong>.
+              } @else {
+                <strong>{{ tickets.length }} loaded tickets</strong>.
+              }
+            </p>
+            <div class="post-jira-preview">
+              <span class="form-section-label">Comment</span>
+              <textarea class="post-jira-textarea" [(ngModel)]="postToJiraDraft" rows="14" placeholder="Comment to post…"></textarea>
+            </div>
+            <div class="post-jira-preview-rendered">
+              <span class="form-section-label">Preview</span>
+              <div class="preview-pane msg-content-md" [innerHTML]="formatMessageContent(postToJiraDraft)"></div>
+            </div>
+          </div>
+          <div class="overlay-footer">
+            <button class="secondary" (click)="cancelPostToJira()">Cancel</button>
+            <button class="primary" (click)="confirmPostToJira()" [disabled]="postingToJira || !postToJiraDraft.trim()">
+              {{ postingToJira ? 'Posting…' : 'Post to Jira' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    }
 
     <app-ai-thinking-overlay
       [open]="loading || loadingTicket || switchingModel"
@@ -283,7 +323,10 @@ interface TicketInfo {
     }
     .msg-content { white-space: pre-wrap; margin-top: var(--space-xs); font-size: 0.9rem; }
     .msg-content ::ng-deep p { margin: var(--space-xs) 0; }
-    .post-jira-btn { margin-top: var(--space-sm); display: inline-block; font-size: 0.85rem; }
+    .msg-actions { display: flex; gap: var(--space-md); margin-top: var(--space-sm); align-items: center; }
+    .copy-btn { font-size: 0.85rem; transition: color 0.2s; }
+    .copy-btn:hover { color: var(--hyland-blue); }
+    .post-jira-btn { font-size: 0.85rem; }
     .chat-input-row { display: flex; gap: var(--space-sm); align-items: flex-end; }
     .chat-input-row textarea { flex: 1; min-height: 48px; resize: vertical; font-size: 0.9rem; }
     .export-row { display: flex; gap: var(--space-sm); margin-top: var(--space-md); }
@@ -296,6 +339,54 @@ interface TicketInfo {
     .msg-content-md ::ng-deep ul, .msg-content-md ::ng-deep ol { margin: 0.25rem 0; padding-left: 1.25rem; }
     .msg-content-md ::ng-deep code { background: var(--app-code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
     .msg.msg-error .msg-content-md { color: #c00; }
+
+    /* ---- Post-to-Jira overlay ---- */
+    .overlay-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      animation: overlayFadeIn 0.2s ease-out both;
+    }
+    @keyframes overlayFadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .overlay-panel--post-jira {
+      background: var(--app-card-bg); border-radius: var(--radius-md, 12px);
+      box-shadow: 0 12px 48px rgba(0,0,0,0.25); width: 720px; max-width: 92vw;
+      max-height: 88vh; display: flex; flex-direction: column;
+      animation: overlaySlideUp 0.3s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    @keyframes overlaySlideUp {
+      from { opacity: 0; transform: translateY(18px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .overlay-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--app-card-border);
+    }
+    .overlay-title { font-size: 1.1rem; font-weight: 700; margin: 0; }
+    .overlay-close {
+      background: none; border: none; font-size: 1.5rem; cursor: pointer;
+      color: var(--app-text-muted); line-height: 1; padding: 0 0.25rem;
+    }
+    .overlay-close:hover { color: var(--app-text); }
+    .overlay-body { padding: 1rem 1.25rem; overflow-y: auto; flex: 1; min-height: 0; }
+    .overlay-hint { font-size: 0.85rem; color: var(--app-text-muted); margin: 0 0 0.75rem; }
+    .post-jira-preview { margin-bottom: 1rem; }
+    .post-jira-textarea {
+      width: 100%; font-family: 'Source Sans 3', sans-serif; font-size: 0.9rem;
+      padding: 0.6rem 0.75rem; border: 1px solid var(--app-input-border);
+      border-radius: var(--radius-sm, 6px); background: var(--app-input-bg);
+      color: var(--app-text); resize: vertical; min-height: 120px;
+    }
+    .post-jira-textarea:focus { outline: none; border-color: var(--hyland-blue); box-shadow: 0 0 0 2px rgba(0,99,177,0.12); }
+    .post-jira-preview-rendered { margin-bottom: 0.5rem; }
+    .preview-pane {
+      border: 1px solid var(--app-card-border); border-radius: var(--radius-sm, 6px);
+      padding: 0.75rem; min-height: 80px; max-height: 200px; overflow-y: auto;
+      background: var(--app-surface-muted); font-size: 0.9rem; white-space: pre-wrap;
+    }
+    .overlay-footer {
+      display: flex; justify-content: flex-end; gap: var(--space-sm);
+      padding: 0.75rem 1.25rem; border-top: 1px solid var(--app-card-border);
+    }
   `],
 })
 export class TicketAnalyzerComponent implements OnInit, OnDestroy {
@@ -317,6 +408,11 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   lastError = '';
   conversationTitle = '';
   jiraServerUrl = '';
+  copiedIndex: number | null = null;
+  private copiedTimer: any = null;
+  postToJiraOverlayOpen = false;
+  postToJiraDraft = '';
+  postingToJira = false;
   private lastSentMessage = '';
   private lastQuickActionKey = '';
 
@@ -338,6 +434,11 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
     if (this.loadingTicket && !this.loading) return 'Fetching ticket details from Jira…';
     if (this.switchingModel) return 'Updating the chat session with your selected model…';
     return 'Processing your message or quick action…';
+  }
+
+  @HostListener('document:keydown.escape')
+  onEscapeKey(): void {
+    if (this.postToJiraOverlayOpen) { this.cancelPostToJira(); }
   }
 
   ngOnInit(): void {
@@ -659,11 +760,44 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
     });
   }
 
-  postToJira(content: string): void {
-    this.api.postForm('/chat/post-to-jira', { content }).subscribe({
-      next: () => { this.toast.success('Posted to Jira.'); },
-      error: () => { this.toast.error('Failed to post to Jira.'); },
+  copyToClipboard(content: string, index: number): void {
+    navigator.clipboard.writeText(content).then(() => {
+      if (this.copiedTimer) clearTimeout(this.copiedTimer);
+      this.copiedIndex = index;
+      this.copiedTimer = setTimeout(() => { this.copiedIndex = null; }, 2000);
+      this.toast.success('Copied to clipboard.');
+    }).catch(() => {
+      this.toast.error('Failed to copy.');
     });
+  }
+
+  postToJira(content: string): void {
+    this.postToJiraDraft = content;
+    this.postToJiraOverlayOpen = true;
+  }
+
+  confirmPostToJira(): void {
+    const content = this.postToJiraDraft.trim();
+    if (!content) return;
+    this.postingToJira = true;
+    this.api.postForm('/chat/post-to-jira', { content }).subscribe({
+      next: () => {
+        this.postingToJira = false;
+        this.postToJiraOverlayOpen = false;
+        this.postToJiraDraft = '';
+        this.toast.success('Comment posted to Jira.');
+      },
+      error: () => {
+        this.postingToJira = false;
+        this.toast.error('Failed to post to Jira.');
+      },
+    });
+  }
+
+  cancelPostToJira(): void {
+    this.postToJiraOverlayOpen = false;
+    this.postToJiraDraft = '';
+    this.postingToJira = false;
   }
 
   exportMarkdown(): void {

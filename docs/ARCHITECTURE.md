@@ -153,7 +153,7 @@ flowchart TB
 |--------------------|------------------|-------------------------------------------------------------------------|
 | `/config`          | ConfigComponent  | Jira/Confluence/AWS configuration; Initialize; Advanced settings (model, etc.). |
 | `/knowledge-base`  | KnowledgeBaseComponent | Populate KB from tickets, Confluence URLs, uploads.                 |
-| `/ticket-analyzer` | TicketAnalyzerComponent | Load tickets, chat with AI, quick actions, model selection.         |
+| `/ticket-analyzer` | TicketAnalyzerComponent | Load tickets, chat with AI, quick actions, model selection. **Copy** response to clipboard; **Post to Jira** via preview/edit overlay. |
 | `/test-cases`      | TestCasesComponent     | Generate test cases (with optional instructions), refine all/one, **confidence-score guardrail** (low-confidence cases require human approval before publishing), **Check Xray for duplicates** (exact + semantic similarity with match-type/score badges), publish to Xray (skips duplicates by default), export. |
 | `/test-plan`       | TestPlanComponent      | Generate/refine test plan, publish to Confluence.                      |
 
@@ -169,7 +169,7 @@ All except `/config` are protected by `initGuard`.
 
 - **Config**: User enters credentials and AWS profile → `POST /api/init` → on success, `InitService.setInitialized(true)` and success popup; model list refreshed.
 - **Test cases**: User can set “Instructions for generation” → Generate calls `POST /api/test-cases/generate` with `user_instructions`; results shown as editable items. Each test case receives an AI **confidence score** (1-5); cases with confidence below 3 are flagged **Needs Review** and blocked from publishing until the user explicitly approves them (human-in-the-loop guardrail). “Apply feedback to all” → `POST /api/test-cases/refine`; “Apply feedback” on one item → `POST /api/test-cases/refine-single`. **Check Xray for duplicates** → `POST /api/test-cases/check-xray-duplicates` — two-pass detection: (1) exact normalized match, (2) semantic similarity via sentence embeddings (cosine ≥ 80%). Response includes `match_type` (`"exact"` / `"semantic"`) and `similarity` score; UI shows "Duplicate" or "Similar (N%)" badges accordingly. Publish uses `write-to-xray` or `write-to-xray-selected` with `skip_if_duplicate` (default true) — both exact and semantic duplicates are skipped. Jira browse links use `GET /api/connection-settings` for `jira_server`.
-- **Ticket analyzer**: Model list from `GET /api/bedrock-models` (no params so backend uses session config); default model from `GET /api/init-status` → `current_model_id`.
+- **Ticket analyzer**: Model list from `GET /api/bedrock-models` (no params so backend uses session config); default model from `GET /api/init-status` → `current_model_id`. Each assistant response shows a **Copy** button (writes raw text to clipboard with a 2-second "Copied" confirmation) and a **Post to Jira** button. Clicking "Post to Jira" opens a modal overlay showing the comment in an editable textarea with a live formatted preview; the user can edit, then **Confirm** to post via `POST /api/chat/post-to-jira` or **Cancel** (button / backdrop click / Escape key) to return without posting.
 
 ---
 

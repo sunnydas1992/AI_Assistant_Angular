@@ -1104,6 +1104,8 @@ export class TestCasesComponent implements OnInit, OnDestroy {
           is_duplicate: boolean;
           existing_issue_key?: string | null;
           summary_used: string;
+          similarity?: number | null;
+          match_type?: string | null;
         }>;
       }>('/test-cases/check-xray-duplicates', {
         project_key: this.xrayProjectKey.trim(),
