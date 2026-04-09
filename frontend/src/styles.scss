@@ -479,6 +479,12 @@ input[type="checkbox"] {
   height: 1.1rem;
   accent-color: var(--hyland-teal);
 }
+input[type="radio"] {
+  cursor: pointer;
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--hyland-blue);
+}
 .main-content {
   animation: pageFadeSlide 0.45s cubic-bezier(0.22,1,0.36,1) both;
 }

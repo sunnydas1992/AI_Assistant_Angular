@@ -255,6 +255,35 @@ interface TicketInfo {
       </div>
     }
 
+    @if (genTcOverlayOpen) {
+      <div class="overlay-backdrop" (click)="cancelGenTc()">
+        <div class="overlay-panel overlay-panel--gen-tc" (click)="$event.stopPropagation()">
+          <div class="overlay-header">
+            <h2 class="overlay-title">Select a ticket</h2>
+            <button class="overlay-close" (click)="cancelGenTc()">&times;</button>
+          </div>
+          <div class="overlay-body">
+            <p class="gen-tc-hint">Choose which ticket to generate test cases for:</p>
+            <div class="gen-tc-radio-list">
+              @for (t of tickets; track t.ticket_id) {
+                <label class="gen-tc-radio-item" [class.selected]="genTcSelectedTicket === t.ticket_id">
+                  <input type="radio" name="genTcTicket" [value]="t.ticket_id" [(ngModel)]="genTcSelectedTicket" />
+                  <span class="gen-tc-radio-id">{{ t.ticket_id }}</span>
+                  @if (t.summary) {
+                    <span class="gen-tc-radio-summary">{{ t.summary }}</span>
+                  }
+                </label>
+              }
+            </div>
+          </div>
+          <div class="overlay-footer">
+            <button class="secondary" (click)="cancelGenTc()">Cancel</button>
+            <button class="primary" (click)="confirmGenTc()" [disabled]="!genTcSelectedTicket">Continue</button>
+          </div>
+        </div>
+      </div>
+    }
+
     @if (ticketDetailOverlayOpen) {
       <div class="overlay-backdrop" (click)="closeTicketDetails()">
         <div class="overlay-panel overlay-panel--ticket-detail" (click)="$event.stopPropagation()">
@@ -639,6 +668,22 @@ interface TicketInfo {
       background: var(--app-surface-muted); font-size: 0.9rem; white-space: pre-wrap;
     }
 
+    /* ── Generate Test Cases Picker Overlay ── */
+    .overlay-panel--gen-tc { width: 480px; max-width: 92vw; }
+    .gen-tc-hint { font-size: 0.88rem; color: var(--app-text-muted); margin: 0 0 0.75rem; }
+    .gen-tc-radio-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .gen-tc-radio-item {
+      display: flex; align-items: center; gap: 0.6rem; cursor: pointer;
+      padding: 0.55rem 0.75rem; border-radius: var(--radius-sm, 6px);
+      border: 1px solid var(--app-card-border); background: var(--app-surface-muted);
+      font-size: 0.88rem; transition: border-color 0.15s, background 0.15s;
+    }
+    .gen-tc-radio-item:hover { border-color: var(--hyland-blue); }
+    .gen-tc-radio-item.selected { border-color: var(--hyland-blue); background: rgba(0,99,177,0.08); }
+    .gen-tc-radio-item input[type="radio"] { accent-color: var(--hyland-blue); margin: 0; width: auto; flex: 0 0 auto; }
+    .gen-tc-radio-id { font-weight: 700; color: var(--app-text); white-space: nowrap; }
+    .gen-tc-radio-summary { color: var(--app-text-muted); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
     /* ── Ticket Detail Overlay ── */
     .overlay-panel--ticket-detail {
       width: 780px; max-width: 94vw; max-height: 88vh;
@@ -679,7 +724,7 @@ interface TicketInfo {
       .toolbar-convo { flex-wrap: wrap; }
       .convo-title-input { flex: 1; min-width: 80px; }
       .history-dropdown { right: auto; left: 0; }
-      .overlay-panel--post-jira, .overlay-panel--ticket-detail { width: 98vw; }
+      .overlay-panel--post-jira, .overlay-panel--ticket-detail, .overlay-panel--gen-tc { width: 98vw; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -716,6 +761,8 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   postToJiraDraft = '';
   postingToJira = false;
   postToJiraTargetTicket = '';
+  genTcOverlayOpen = false;
+  genTcSelectedTicket = '';
   ticketDetailOverlayOpen = false;
   ticketDetailData: any = null;
   loadingTicketDetails = false;
@@ -746,6 +793,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
 
   @HostListener('document:keydown.escape')
   onEscapeKey(): void {
+    if (this.genTcOverlayOpen) { this.cancelGenTc(); return; }
     if (this.ticketDetailOverlayOpen) { this.closeTicketDetails(); return; }
     if (this.postToJiraOverlayOpen) { this.cancelPostToJira(); return; }
     if (this.historyOpen) { this.historyOpen = false; }
@@ -766,11 +814,27 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   }
 
   goToGenerateTestCases(): void {
-    if (this.tickets.length) {
-      const ticketId = this.tickets[0].ticket_id;
-      this.testCasePrefill.setPrefill('jira', ticketId);
+    if (!this.tickets.length) return;
+    if (this.tickets.length === 1) {
+      this.testCasePrefill.setPrefill('jira', this.tickets[0].ticket_id);
       this.router.navigate(['/test-cases']);
+      return;
     }
+    this.genTcSelectedTicket = this.tickets[0].ticket_id;
+    this.genTcOverlayOpen = true;
+  }
+
+  confirmGenTc(): void {
+    if (!this.genTcSelectedTicket) return;
+    this.testCasePrefill.setPrefill('jira', this.genTcSelectedTicket);
+    this.genTcOverlayOpen = false;
+    this.genTcSelectedTicket = '';
+    this.router.navigate(['/test-cases']);
+  }
+
+  cancelGenTc(): void {
+    this.genTcOverlayOpen = false;
+    this.genTcSelectedTicket = '';
   }
 
   ngOnDestroy(): void {}
