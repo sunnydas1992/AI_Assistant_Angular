@@ -369,6 +369,20 @@ Guidelines:
             elif msg.role == "assistant":
                 llm_messages.append(AIMessage(content=msg.content))
         
+        # Attach images to the last HumanMessage as multimodal content blocks
+        image_attachments = [a for a in self.attachments if a.is_image]
+        if image_attachments and llm_messages and isinstance(llm_messages[-1], HumanMessage):
+            last_human = llm_messages[-1]
+            content_blocks: list = [{"type": "text", "text": last_human.content}]
+            for img_att in image_attachments:
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{img_att.content_type};base64,{img_att.content}"
+                    },
+                })
+            llm_messages[-1] = HumanMessage(content=content_blocks)
+        
         try:
             # Get response from LLM
             response = self.aws_service.llm.invoke(llm_messages)
@@ -437,13 +451,18 @@ Guidelines:
             parts.append("\n**Attached Documents:**")
             for att in text_attachments:
                 if include_attachments is None or att.name in include_attachments:
-                    # Truncate very long attachments
                     content = att.content
                     if len(content) > 50000:
                         content = content[:50000] + "\n... [truncated]"
                     parts.append(f"\n--- {att.name} ({att.content_type}) ---")
                     parts.append(content)
         
+        # Note image attachments so the LLM knows they exist
+        image_attachments = [a for a in self.attachments if a.is_image]
+        if image_attachments:
+            names = ", ".join(a.name for a in image_attachments)
+            parts.append(f"\n**Attached Images (included in the next user message):** {names}")
+
         return parts
     
     def _get_rag_context(self, query: str, n_results: int = 3) -> str:
