@@ -27,29 +27,39 @@ import { ApiService } from '../api.service';
     </header>
 
     <div class="dashboard-cards">
-      <a routerLink="/ticket-analyzer" class="card shortcut-card">
-        <h2>Ticket Analyzer</h2>
-        <p>Load Jira tickets, chat with AI, and use quick actions (summarize, gaps, risks, test ideas).</p>
-        <span class="card-link">Open Ticket Analyzer →</span>
-      </a>
-      <a routerLink="/test-cases" class="card shortcut-card">
-        <h2>Generate Test Cases</h2>
-        <p>Generate test cases from a Jira ticket or Confluence page. Edit, refine, and publish to Xray.</p>
-        <span class="card-link">Open Test Cases →</span>
-      </a>
-      <a routerLink="/test-plan" class="card shortcut-card">
-        <h2>Test Plan</h2>
-        <p>Create a test plan from Confluence pages, Jira tickets, and uploads. Publish to Confluence.</p>
-        <span class="card-link">Open Test Plan →</span>
-      </a>
-      <a routerLink="/knowledge-base" class="card shortcut-card">
-        <h2>Knowledge Base</h2>
-        <p>Add Jira tickets, Confluence pages, and documents to improve RAG context for generation.</p>
-        @if (kbCount !== null) {
-          <p class="kb-badge">KB: {{ kbCount }} chunks</p>
+      @if (modelLoading) {
+        @for (i of [1,2,3,4]; track i) {
+          <div class="card shortcut-card skeleton-card-wrap">
+            <div class="skeleton skeleton-line medium"></div>
+            <div class="skeleton skeleton-line"></div>
+            <div class="skeleton skeleton-line short"></div>
+          </div>
         }
-        <span class="card-link">Open Knowledge Base →</span>
-      </a>
+      } @else {
+        <a routerLink="/ticket-analyzer" class="card shortcut-card">
+          <h2>Ticket Analyzer</h2>
+          <p>Load Jira tickets, chat with AI, and use quick actions (summarize, gaps, risks, test ideas).</p>
+          <span class="card-link">Open Ticket Analyzer →</span>
+        </a>
+        <a routerLink="/test-cases" class="card shortcut-card">
+          <h2>Generate Test Cases</h2>
+          <p>Generate test cases from a Jira ticket or Confluence page. Edit, refine, and publish to Xray.</p>
+          <span class="card-link">Open Test Cases →</span>
+        </a>
+        <a routerLink="/test-plan" class="card shortcut-card">
+          <h2>Test Plan</h2>
+          <p>Create a test plan from Confluence pages, Jira tickets, and uploads. Publish to Confluence.</p>
+          <span class="card-link">Open Test Plan →</span>
+        </a>
+        <a routerLink="/knowledge-base" class="card shortcut-card">
+          <h2>Knowledge Base</h2>
+          <p>Add Jira tickets, Confluence pages, and documents to improve RAG context for generation.</p>
+          @if (kbCount !== null) {
+            <p class="kb-badge">KB: {{ kbCount }} chunks</p>
+          }
+          <span class="card-link">Open Knowledge Base →</span>
+        </a>
+      }
     </div>
 
     <div class="dashboard-footer">
@@ -155,8 +165,17 @@ import { ApiService } from '../api.service';
       transition: letter-spacing 0.3s ease, color 0.2s ease;
     }
     .shortcut-card:hover .card-link { letter-spacing: 0.03em; color: var(--hyland-teal); }
+    .skeleton-card-wrap { padding: var(--space-lg); min-height: 100px; cursor: default; }
+    .skeleton-card-wrap:hover { transform: none; box-shadow: var(--shadow-card); }
     .dashboard-footer { font-size: 0.9rem; color: var(--app-text-muted); }
     .dashboard-footer a { color: var(--hyland-blue); }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0s !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   `],
 })
 export class DashboardComponent implements OnInit {

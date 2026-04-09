@@ -569,11 +569,15 @@ class AtlassianService:
         embed_fn=None,
     ) -> Dict[str, Any]:
         """
-        Returns ``created_keys`` and ``skipped_duplicates`` (existing_issue_key + summary_used per skip).
+        Returns ``created_keys``, ``skipped_duplicates``, and ``per_item``
+        (one entry per input test case with status/key info for front-end mapping).
         """
         created_keys: List[str] = []
         skipped_duplicates: List[Dict[str, Any]] = []
-        for test_case in test_cases:
+        per_item: List[Dict[str, Any]] = []
+        for idx, test_case in enumerate(test_cases):
+            title = test_case.get("title") or ""
+            tc_id = test_case.get("id") or ""
             if skip_if_duplicate:
                 match = self.find_existing_xray_test(project_key, test_case, output_format, embed_fn=embed_fn)
                 if match["key"]:
@@ -590,11 +594,15 @@ class AtlassianService:
                             "match_type": match["match_type"],
                         }
                     )
+                    per_item.append({"index": idx, "id": tc_id, "title": title, "status": "skipped_duplicate", "existing_key": match["key"]})
                     continue
             issue_key = self.create_xray_test(test_case, project_key, output_format)
             if issue_key:
                 created_keys.append(issue_key)
-        return {"created_keys": created_keys, "skipped_duplicates": skipped_duplicates}
+                per_item.append({"index": idx, "id": tc_id, "title": title, "status": "created", "created_key": issue_key})
+            else:
+                per_item.append({"index": idx, "id": tc_id, "title": title, "status": "failed"})
+        return {"created_keys": created_keys, "skipped_duplicates": skipped_duplicates, "per_item": per_item}
 
     def test_jira_connection(self) -> bool:
         try:

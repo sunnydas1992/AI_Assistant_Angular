@@ -1,5 +1,6 @@
-import { Component, OnInit } from '@angular/core';
-import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Component, OnInit, OnDestroy } from '@angular/core';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Subscription, filter } from 'rxjs';
 import { AsyncPipe } from '@angular/common';
 import { InitService } from './init.service';
 import { ToastService } from './toast.service';
@@ -14,7 +15,20 @@ import { ThemeService } from './theme.service';
     <div class="app-layout">
       <div class="toast-stack" aria-live="polite">
         @for (t of (toastService.toastsObservable | async); track t.id) {
-          <div class="toast toast-{{ t.type }}">{{ t.text }}</div>
+          <div class="toast toast-{{ t.type }}" [class.toast-exit]="t.exiting">
+            <span class="toast-icon" aria-hidden="true">
+              @if (t.type === 'success') {
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+              } @else if (t.type === 'error') {
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+              } @else {
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+              }
+            </span>
+            <span class="toast-text">{{ t.text }}</span>
+            <button class="toast-dismiss" (click)="toastService.dismiss(t.id)" aria-label="Dismiss">&times;</button>
+            <div class="toast-progress" [style.animation-duration.ms]="t.duration"></div>
+          </div>
         }
       </div>
       @if (showOnboardingBanner && (initService.initialized$ | async)) {
@@ -24,12 +38,23 @@ import { ThemeService } from './theme.service';
         </div>
       }
       <div class="app-body">
-      <aside class="sidebar">
+      <aside class="sidebar" [class.collapsed]="sidebarCollapsed">
         <div class="sidebar-shimmer" aria-hidden="true"></div>
-        <a routerLink="/home" class="logo-block logo-link" title="Go to Home" aria-label="Hyland QA Assistant — Home">
-          <span class="logo-wordmark">Hyland</span>
-          <span class="logo-text">QA Assistant</span>
-        </a>
+        <div class="sidebar-top-row">
+          <a routerLink="/home" class="logo-block logo-link" title="Go to Home" aria-label="Hyland QA Assistant — Home">
+            <span class="logo-wordmark">{{ sidebarCollapsed ? 'H' : 'Hyland' }}</span>
+            <span class="logo-text" [class.hidden]="sidebarCollapsed">QA Assistant</span>
+          </a>
+          <button type="button" class="sidebar-toggle" (click)="toggleSidebar()" [attr.aria-label]="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'" title="{{ sidebarCollapsed ? 'Expand' : 'Collapse' }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              @if (sidebarCollapsed) {
+                <polyline points="9 18 15 12 9 6"/>
+              } @else {
+                <polyline points="15 18 9 12 15 6"/>
+              }
+            </svg>
+          </button>
+        </div>
 
         <nav class="sidebar-nav-main" aria-label="Main navigation">
           <a routerLink="/config" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}" class="nav-pill">
@@ -119,7 +144,7 @@ import { ThemeService } from './theme.service';
           }
         </div>
       </aside>
-      <main class="main-content">
+      <main class="main-content" [class.page-entering]="pageEntering">
         <router-outlet></router-outlet>
       </main>
       </div>
@@ -152,7 +177,28 @@ import { ThemeService } from './theme.service';
       box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
       position: relative;
       overflow: hidden;
+      transition: width 0.3s cubic-bezier(0.22,1,0.36,1), padding 0.3s cubic-bezier(0.22,1,0.36,1);
     }
+    .sidebar.collapsed { width: 60px; padding: 1rem 0.35rem; }
+    .sidebar.collapsed .nav-label { display: none; }
+    .sidebar.collapsed .logo-text { display: none; }
+    .sidebar.collapsed .logo-block { align-items: center; }
+    .sidebar.collapsed .logo-wordmark { font-size: 1.1rem; letter-spacing: 0; }
+    .sidebar.collapsed a.nav-pill,
+    .sidebar.collapsed button.nav-pill { justify-content: center; padding: 0.55rem 0.35rem; }
+    .sidebar.collapsed .nav-icon { margin: 0 auto; }
+    .sidebar-top-row {
+      display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1.25rem;
+    }
+    .sidebar.collapsed .sidebar-top-row { flex-direction: column; align-items: center; gap: 0.5rem; }
+    .sidebar-toggle {
+      background: none; border: 1px solid var(--nav-pill-border); border-radius: 6px;
+      color: var(--sidebar-text); cursor: pointer; padding: 0.25rem; display: grid; place-items: center;
+      width: 1.6rem; height: 1.6rem; flex-shrink: 0; opacity: 0.7;
+      transition: opacity 0.2s, background 0.2s, transform 0.2s;
+    }
+    .sidebar-toggle:hover { opacity: 1; background: var(--nav-pill-hover-bg); }
+    .sidebar-toggle svg { width: 1rem; height: 1rem; }
     .sidebar-shimmer {
       position: absolute;
       top: 0;
@@ -220,7 +266,9 @@ import { ThemeService } from './theme.service';
       background-clip: text;
       -webkit-text-fill-color: transparent;
       animation: logoTextShimmer 4s ease-in-out infinite;
+      transition: opacity 0.2s;
     }
+    .logo-text.hidden { display: none; }
     @keyframes logoTextShimmer {
       0%, 100% { background-position: 0% center; }
       50%      { background-position: 200% center; }
@@ -353,6 +401,13 @@ import { ThemeService } from './theme.service';
       overflow-y: auto;
       overflow-x: hidden;
     }
+    .main-content.page-entering {
+      animation: pageTransition 0.3s ease both;
+    }
+    @keyframes pageTransition {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
     .toast-stack {
       position: fixed;
       top: 1rem;
@@ -365,25 +420,46 @@ import { ThemeService } from './theme.service';
       pointer-events: none;
     }
     .toast-stack .toast {
-      padding: 0.65rem 1.25rem;
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.6rem 0.75rem 0.6rem 0.65rem;
       border-radius: var(--radius-sm);
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       font-weight: 600;
       box-shadow: var(--shadow-card-hover);
-      white-space: nowrap;
-      max-width: 90vw;
+      max-width: 92vw;
       overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .toast-stack .toast {
-      animation: toastSlideIn 0.3s ease forwards;
+      pointer-events: auto;
+      position: relative;
     }
     .toast-stack .toast-success { background: var(--hyland-teal); color: var(--hyland-dark-blue); }
     .toast-stack .toast-error { background: #c0392b; color: #fff; }
     .toast-stack .toast-info { background: var(--hyland-blue); color: #fff; }
-    @keyframes toastSlideIn {
-      from { opacity: 0; transform: translateY(-12px); }
-      to { opacity: 1; transform: translateY(0); }
+    .toast-icon { flex-shrink: 0; width: 1.15rem; height: 1.15rem; display: grid; place-items: center; }
+    .toast-icon svg { width: 1.15rem; height: 1.15rem; }
+    .toast-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .toast-dismiss {
+      flex-shrink: 0; background: none; border: none; color: inherit; font-size: 1.1rem;
+      cursor: pointer; padding: 0 0.15rem; line-height: 1; opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .toast-dismiss:hover { opacity: 1; }
+    .toast-progress {
+      position: absolute; bottom: 0; left: 0; height: 3px; width: 100%;
+      background: rgba(255,255,255,0.35); border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+      animation: toastProgressShrink linear forwards;
+      transform-origin: left;
+    }
+    .toast-success .toast-progress { background: rgba(0,0,0,0.2); }
+    @keyframes toastProgressShrink {
+      from { transform: scaleX(1); }
+      to   { transform: scaleX(0); }
+    }
+    .toast-stack .toast.toast-exit {
+      animation: toastSlideOut 0.3s ease forwards !important;
+    }
+    @keyframes toastSlideOut {
+      from { opacity: 1; transform: translateY(0) scale(1); }
+      to   { opacity: 0; transform: translateY(-14px) scale(0.92); }
     }
     .onboarding-banner {
       flex-shrink: 0;
@@ -407,22 +483,39 @@ import { ThemeService } from './theme.service';
         overflow: visible;
       }
       .app-body { flex-direction: column; overflow: visible; }
-      .sidebar {
+      .sidebar, .sidebar.collapsed {
         width: 100%;
         height: auto;
         max-height: none;
+        padding: 1rem 0.65rem 1rem;
       }
+      .sidebar.collapsed .nav-label { display: inline; }
+      .sidebar.collapsed .logo-text { display: inline; }
+      .sidebar.collapsed a.nav-pill,
+      .sidebar.collapsed button.nav-pill { justify-content: flex-start; padding: 0.55rem 0.65rem; }
+      .sidebar-toggle { display: none; }
       .main-content {
         overflow: visible;
         min-height: 0;
       }
     }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0s !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   `],
 })
-export class AppComponent implements OnInit {
+export class AppComponent implements OnInit, OnDestroy {
   title = 'QA Assistant';
   showOnboardingBanner = true;
+  sidebarCollapsed = false;
+  pageEntering = false;
   private static readonly ONBOARDING_DISMISSED_KEY = 'qa_assistant_onboarding_dismissed';
+  private static readonly SIDEBAR_COLLAPSED_KEY = 'qa_assistant_sidebar_collapsed';
+  private routerSub?: Subscription;
 
   constructor(
     public initService: InitService,
@@ -436,9 +529,25 @@ export class AppComponent implements OnInit {
     this.initService.checkInitStatus();
     try {
       this.showOnboardingBanner = !localStorage.getItem(AppComponent.ONBOARDING_DISMISSED_KEY);
+      this.sidebarCollapsed = localStorage.getItem(AppComponent.SIDEBAR_COLLAPSED_KEY) === '1';
     } catch {
       this.showOnboardingBanner = false;
     }
+    this.routerSub = this.router.events
+      .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
+      .subscribe(() => {
+        this.pageEntering = false;
+        requestAnimationFrame(() => { this.pageEntering = true; });
+      });
+  }
+
+  ngOnDestroy(): void {
+    this.routerSub?.unsubscribe();
+  }
+
+  toggleSidebar(): void {
+    this.sidebarCollapsed = !this.sidebarCollapsed;
+    try { localStorage.setItem(AppComponent.SIDEBAR_COLLAPSED_KEY, this.sidebarCollapsed ? '1' : '0'); } catch {}
   }
 
   dismissOnboarding(): void {

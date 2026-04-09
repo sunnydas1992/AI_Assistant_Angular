@@ -939,6 +939,7 @@ async def api_write_to_xray(rag: JiraRAG = Depends(get_session_rag), body: Write
         result = await run_sync(_write)
         created = result.get("created_keys") or []
         skipped = result.get("skipped_duplicates") or []
+        per_item = result.get("per_item") or []
         logger.info(
             "write-to-xray success project_key=%s created=%s skipped=%s keys=%s",
             body.project_key.strip(),
@@ -952,6 +953,7 @@ async def api_write_to_xray(rag: JiraRAG = Depends(get_session_rag), body: Write
             "count": len(created),
             "skipped_duplicates": skipped,
             "skipped_count": len(skipped),
+            "per_item": per_item,
         }
     except HTTPException:
         raise
@@ -987,6 +989,7 @@ async def api_write_selected_to_xray(rag: JiraRAG = Depends(get_session_rag), bo
         result = await run_sync(_write_sel)
         created = result.get("created_keys") or []
         skipped = result.get("skipped_duplicates") or []
+        per_item = result.get("per_item") or []
         logger.info(
             "write-to-xray-selected success project_key=%s created=%s skipped=%s",
             body.project_key.strip(),
@@ -999,6 +1002,7 @@ async def api_write_selected_to_xray(rag: JiraRAG = Depends(get_session_rag), bo
             "count": len(created),
             "skipped_duplicates": skipped,
             "skipped_count": len(skipped),
+            "per_item": per_item,
         }
     except HTTPException:
         raise

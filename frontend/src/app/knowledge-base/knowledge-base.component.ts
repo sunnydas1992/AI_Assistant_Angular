@@ -50,7 +50,14 @@ import { ToastService } from '../toast.service';
       @if (kbCount !== null) {
         <p class="kb-size" title="Number of text chunks stored for RAG retrieval">KB size: <strong>{{ kbCount }}</strong> chunks</p>
       }
-      @if (sources.length) {
+      @if (loadingSources) {
+        <div class="sources-list">
+          <h3>Sources in Knowledge Base</h3>
+          <div class="skeleton skeleton-line medium"></div>
+          <div class="skeleton skeleton-line"></div>
+          <div class="skeleton skeleton-line short"></div>
+        </div>
+      } @else if (sources.length) {
         <div class="sources-list">
           <h3>Sources in Knowledge Base</h3>
           <ul>

@@ -52,6 +52,9 @@ export interface TestCaseItem {
    * Low-confidence cases require explicit user approval before they can be published.
    */
   approved?: boolean;
+  _exiting?: boolean;
+  /** Jira issue key assigned after successful publish to Xray. */
+  publishedKey?: string;
 }
 
 @Component({
@@ -139,6 +142,14 @@ export interface TestCaseItem {
       }
     </div>
 
+    @if (loading && !items.length) {
+      <div class="card results-card skeleton-results">
+        @for (i of [1,2,3]; track i) {
+          <div class="skeleton skeleton-card" style="height: 72px"></div>
+        }
+      </div>
+    }
+
     @if (items.length) {
       <div class="card results-card">
         <div class="refine-all-section">
@@ -199,7 +210,7 @@ export interface TestCaseItem {
         </div>
 
         @for (tc of items; track tc.id; let i = $index) {
-          <section class="tc-section" [class.tc-selected]="tc.selected" [class.tc-needs-review]="tc.approved === false">
+          <section class="tc-section" [class.tc-selected]="tc.selected" [class.tc-needs-review]="tc.approved === false" [class.tc-exiting]="tc._exiting">
             <div class="tc-section-header">
               <label class="tc-checkbox">
                 <input type="checkbox" [(ngModel)]="tc.selected" />
@@ -243,6 +254,17 @@ export interface TestCaseItem {
                     <a [href]="jiraBrowseUrl(tc.existingXrayKey)" target="_blank" rel="noopener" class="dup-jira-link">{{ tc.existingXrayKey }}</a>
                   } @else {
                     <span class="dup-key">{{ tc.existingXrayKey }}</span>
+                  }
+                </span>
+              }
+              @if (tc.publishedKey) {
+                <span class="tc-published-badge" title="Published to Jira/Xray">
+                  @if (jiraServerUrl) {
+                    <svg class="published-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                    <a [href]="jiraBrowseUrl(tc.publishedKey)" target="_blank" rel="noopener" class="published-link">{{ tc.publishedKey }}</a>
+                  } @else {
+                    <svg class="published-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                    <span class="published-key-text">{{ tc.publishedKey }}</span>
                   }
                 </span>
               }
@@ -430,6 +452,7 @@ export interface TestCaseItem {
     .xray-dup-hint { margin-top: 0.5rem; max-width: 40rem; }
 
     .results-card { margin-top: 1rem; }
+    .skeleton-results { padding: 1.25rem; }
     .results-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
     .results-header .card-title { margin: 0; padding: 0; border: none; }
     .results-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; width: 100%; }
@@ -450,6 +473,7 @@ export interface TestCaseItem {
       animation: tcItemEnter 0.35s cubic-bezier(0.22,1,0.36,1) both;
     }
     .tc-section:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(25,31,94,0.06); }
+    .tc-section.tc-exiting { animation: itemFadeOut 0.28s ease forwards; pointer-events: none; }
     .tc-section.tc-selected { border-color: rgba(19, 234, 193, 0.5); box-shadow: 0 0 0 1px rgba(19, 234, 193, 0.2), 0 0 12px rgba(19,234,193,0.06); }
     .tc-section:last-child { margin-bottom: 0; }
     @keyframes tcItemEnter {
@@ -528,6 +552,23 @@ export interface TestCaseItem {
     }
     .dup-sim-score { font-weight: 600; opacity: 0.85; }
     .dup-jira-link { color: var(--hyland-blue); font-weight: 700; }
+    .tc-published-badge {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      font-size: 0.78rem; font-weight: 700;
+      color: #0d7c5f;
+      background: rgba(19, 234, 193, 0.15);
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      white-space: nowrap;
+      animation: badgePop 0.3s cubic-bezier(0.34,1.56,0.64,1) both;
+    }
+    .published-icon { width: 0.85rem; height: 0.85rem; flex-shrink: 0; }
+    .published-link {
+      color: var(--hyland-blue); font-weight: 700; text-decoration: none;
+      transition: color 0.15s;
+    }
+    .published-link:hover { color: var(--hyland-teal); text-decoration: underline; }
+    .published-key-text { font-weight: 700; }
     .dup-key { font-weight: 700; }
     .tc-delete-btn { margin-left: auto; font-size: 1.25rem; line-height: 1; padding: 0.2rem 0.4rem; color: var(--app-icon-delete); border-radius: 4px; }
     .tc-delete-btn:hover { color: #c00; background: rgba(200,0,0,0.08); }
@@ -630,16 +671,11 @@ export interface TestCaseItem {
       display: flex; align-items: center; justify-content: center;
       animation: overlayFadeIn 0.25s ease both;
     }
-    @keyframes overlayFadeIn { from { opacity: 0; } to { opacity: 1; } }
     .overlay-panel {
       background: var(--app-card-bg); border-radius: var(--radius-lg, 10px);
       box-shadow: 0 12px 48px rgba(0,0,0,0.25); border: 1px solid var(--app-card-border);
       display: flex; flex-direction: column; max-height: 90vh;
-      animation: overlaySlideIn 0.3s cubic-bezier(0.22,1,0.36,1) both;
-    }
-    @keyframes overlaySlideIn {
-      from { opacity: 0; transform: translateY(20px) scale(0.97); }
-      to   { opacity: 1; transform: translateY(0) scale(1); }
+      animation: overlaySlideUp 0.3s cubic-bezier(0.22,1,0.36,1) both;
     }
     .overlay-panel--edit { width: 92vw; max-width: 960px; }
     .overlay-panel--publish { width: 92vw; max-width: 1040px; }
@@ -705,6 +741,13 @@ export interface TestCaseItem {
       .form-grid { grid-template-columns: 1fr; }
       .results-toolbar { flex-direction: column; align-items: flex-start; }
       .overlay-panel--edit, .overlay-panel--publish { width: 98vw; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0s !important;
+        transition-duration: 0.01ms !important;
+      }
     }
   `],
 })
@@ -958,12 +1001,16 @@ export class TestCasesComponent implements OnInit, OnDestroy {
       count?: number;
       skipped_count?: number;
       detail?: string;
+      per_item?: { index: number; id?: string; title?: string; status: string; created_key?: string; existing_key?: string }[];
     }>(endpoint, body).subscribe({
       next: (res) => {
         this.writingToXray = false;
         this.publishReviewOpen = false;
         this.xrayOk = res?.ok ?? false;
         const skipped = res?.skipped_count ?? 0;
+        if (res?.ok && res?.per_item?.length) {
+          this.mapPublishedKeys(res.per_item, items);
+        }
         if (res?.ok && res?.created_keys?.length) {
           this.xrayMessage = `Published ${res.count} test(s) to Xray: ${res.created_keys.join(', ')}.`;
           if (skipped > 0) this.xrayMessage += ` Skipped ${skipped} duplicate(s).`;
@@ -984,6 +1031,20 @@ export class TestCasesComponent implements OnInit, OnDestroy {
         this.toast.error(this.xrayMessage);
       },
     });
+  }
+
+  private mapPublishedKeys(
+    perItem: { index: number; id?: string; title?: string; status: string; created_key?: string; existing_key?: string }[],
+    publishedItems: TestCaseItem[],
+  ): void {
+    for (const entry of perItem) {
+      const key = entry.status === 'created' ? entry.created_key : entry.status === 'skipped_duplicate' ? entry.existing_key : undefined;
+      if (!key) continue;
+      const reviewItem = publishedItems[entry.index];
+      if (!reviewItem) continue;
+      const mainItem = this.items.find(tc => tc.id === reviewItem.id);
+      if (mainItem) mainItem.publishedKey = key;
+    }
   }
 
   cancelPublishReview(): void {
@@ -1277,8 +1338,11 @@ export class TestCasesComponent implements OnInit, OnDestroy {
   }
 
   removeTestCase(tc: TestCaseItem): void {
-    this.items = this.items.filter((t) => t.id !== tc.id);
-    this.toast.info('Test case removed.');
+    tc._exiting = true;
+    setTimeout(() => {
+      this.items = this.items.filter((t) => t.id !== tc.id);
+      this.toast.info('Test case removed.');
+    }, 280);
   }
 
   deleteSelected(): void {

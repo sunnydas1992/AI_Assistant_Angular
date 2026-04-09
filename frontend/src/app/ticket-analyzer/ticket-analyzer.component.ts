@@ -141,6 +141,13 @@ interface TicketInfo {
         </div>
 
         <div class="chat-messages" #messagesEl>
+          @if (loading && !messages.length) {
+            <div class="skeleton-chat-placeholder">
+              <div class="skeleton skeleton-bubble wide"></div>
+              <div class="skeleton skeleton-bubble narrow"></div>
+              <div class="skeleton skeleton-bubble wide"></div>
+            </div>
+          }
           @for (msg of messages; track $index) {
             <div class="msg" [class.user]="msg.role === 'user'" [class.assistant]="msg.role === 'assistant'" [class.msg-error]="msg.role === 'assistant' && msg.content.startsWith('Error:')">
               <strong>{{ msg.role === 'user' ? 'You' : 'Assistant' }}</strong>
@@ -346,16 +353,11 @@ interface TicketInfo {
       display: flex; align-items: center; justify-content: center;
       animation: overlayFadeIn 0.2s ease-out both;
     }
-    @keyframes overlayFadeIn { from { opacity: 0; } to { opacity: 1; } }
     .overlay-panel--post-jira {
       background: var(--app-card-bg); border-radius: var(--radius-md, 12px);
       box-shadow: 0 12px 48px rgba(0,0,0,0.25); width: 720px; max-width: 92vw;
       max-height: 88vh; display: flex; flex-direction: column;
       animation: overlaySlideUp 0.3s cubic-bezier(0.22,1,0.36,1) both;
-    }
-    @keyframes overlaySlideUp {
-      from { opacity: 0; transform: translateY(18px) scale(0.97); }
-      to   { opacity: 1; transform: translateY(0) scale(1); }
     }
     .overlay-header {
       display: flex; align-items: center; justify-content: space-between;
@@ -386,6 +388,13 @@ interface TicketInfo {
     .overlay-footer {
       display: flex; justify-content: flex-end; gap: var(--space-sm);
       padding: 0.75rem 1.25rem; border-top: 1px solid var(--app-card-border);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0s !important;
+        transition-duration: 0.01ms !important;
+      }
     }
   `],
 })
