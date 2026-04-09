@@ -89,6 +89,32 @@ export interface TestCaseItem {
       }
     </header>
 
+    <div class="card form-card load-tickets-card">
+      <h3 class="card-title">Load Tickets</h3>
+      <div class="input-with-btn">
+        <input [(ngModel)]="ticketIdToAdd" placeholder="PROJ-123, PROJ-456" (keyup.enter)="addTicket()" />
+        <button class="primary" (click)="addTicket()" [disabled]="loadingTicket || !ticketIdToAdd.trim()">
+          @if (loadingTicket) { <span class="loading-spinner"></span> }
+          Load
+        </button>
+      </div>
+      @if (loadedTickets.length) {
+        <div class="loaded-tickets">
+          @for (t of loadedTickets; track t.ticket_id) {
+            <div class="ticket-chip">
+              <span class="ticket-chip-id">{{ t.ticket_id }}</span>
+              <span class="ticket-summary">{{ t.summary }}</span>
+              <button type="button" class="link-btn view-details-link" (click)="viewTicketDetails(t.ticket_id)">View Details</button>
+              @if (jiraServerUrl) {
+                <a [href]="jiraBrowseUrl(t.ticket_id)" target="_blank" rel="noopener" class="open-jira-link">Open in Jira</a>
+              }
+              <button type="button" class="icon-btn" (click)="removeLoadedTicket(t.ticket_id)" title="Remove">&times;</button>
+            </div>
+          }
+        </div>
+      }
+    </div>
+
     <div class="card form-card">
       <h3 class="card-title">Source &amp; Format</h3>
       <div class="form-grid">
@@ -397,6 +423,117 @@ export interface TestCaseItem {
               {{ writingToXray ? 'Publishing…' : 'Confirm and Publish (' + publishReviewItems.length + ')' }}
             </button>
           </div>
+        </div>
+      </div>
+    }
+
+    @if (ticketDetailOverlayOpen) {
+      <div class="overlay-backdrop" (click)="closeTicketDetails()">
+        <div class="overlay-panel overlay-panel--ticket-detail" (click)="$event.stopPropagation()">
+          @if (loadingTicketDetails) {
+            <div class="overlay-body" style="padding:2rem;text-align:center">
+              <span class="loading-spinner"></span> Loading ticket details…
+            </div>
+          } @else if (ticketDetailData) {
+            <div class="overlay-header">
+              <h2 class="overlay-title">{{ ticketDetailData.ticket_id }} — {{ ticketDetailData.summary }}</h2>
+              <button class="overlay-close" (click)="closeTicketDetails()">&times;</button>
+            </div>
+            <div class="overlay-body ticket-detail-body">
+              <div class="td-meta-grid">
+                <div class="td-meta-item"><span class="td-meta-label">Status</span><span class="td-meta-value td-badge">{{ ticketDetailData.status || '—' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Priority</span><span class="td-meta-value">{{ ticketDetailData.priority || '—' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Type</span><span class="td-meta-value">{{ ticketDetailData.issue_type || '—' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Assignee</span><span class="td-meta-value">{{ ticketDetailData.assignee || 'Unassigned' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Reporter</span><span class="td-meta-value">{{ ticketDetailData.reporter || '—' }}</span></div>
+                @if (ticketDetailData.labels?.length) {
+                  <div class="td-meta-item"><span class="td-meta-label">Labels</span><span class="td-meta-value">{{ ticketDetailData.labels.join(', ') }}</span></div>
+                }
+                @if (ticketDetailData.components?.length) {
+                  <div class="td-meta-item"><span class="td-meta-label">Components</span><span class="td-meta-value">{{ ticketDetailData.components.join(', ') }}</span></div>
+                }
+              </div>
+
+              @if (ticketDetailData.description) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Description</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.description }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.acceptance_criteria) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Acceptance Criteria</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.acceptance_criteria }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.steps_to_reproduce) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Steps to Reproduce</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.steps_to_reproduce }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.environment) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Environment</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.environment }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.linked_issues?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Linked Issues</h4>
+                  <ul class="td-list">
+                    @for (li of ticketDetailData.linked_issues; track li.key) {
+                      <li><strong>{{ li.relationship }}</strong>: {{ li.key }} — {{ li.summary }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (ticketDetailData.subtasks?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Subtasks</h4>
+                  <ul class="td-list">
+                    @for (st of ticketDetailData.subtasks; track st.key) {
+                      <li>{{ st.key }} — {{ st.summary }} <span class="td-badge">{{ st.status }}</span></li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (ticketDetailData.attachments?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Attachments</h4>
+                  <ul class="td-list">
+                    @for (att of ticketDetailData.attachments; track att.filename) {
+                      <li>{{ att.filename }} ({{ att.size_kb }} KB)</li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (ticketDetailData.comments?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">
+                    Comments ({{ ticketDetailData.comments.length }})
+                    <button type="button" class="link-btn" (click)="commentsExpanded = !commentsExpanded">
+                      {{ commentsExpanded ? 'Hide' : 'Show' }}
+                    </button>
+                  </h4>
+                  @if (commentsExpanded) {
+                    @for (c of ticketDetailData.comments; track c.date + c.author) {
+                      <div class="td-comment">
+                        <span class="td-comment-meta">{{ c.author }} · {{ c.date }}</span>
+                        <pre class="td-comment-body">{{ c.body }}</pre>
+                      </div>
+                    }
+                  }
+                </div>
+              }
+            </div>
+            <div class="overlay-footer">
+              @if (jiraServerUrl && ticketDetailData.ticket_id) {
+                <a [href]="jiraBrowseUrl(ticketDetailData.ticket_id)" target="_blank" rel="noopener" class="primary">Open in Jira</a>
+              }
+              <button class="secondary" (click)="closeTicketDetails()">Close</button>
+            </div>
+          }
         </div>
       </div>
     }
@@ -737,10 +874,58 @@ export interface TestCaseItem {
     .publish-row-toggle { font-size: 0.82rem; flex-shrink: 0; }
     .publish-row-preview { margin-top: 0.5rem; max-height: 200px; overflow-y: auto; font-size: 0.82rem; }
 
+    /* Load Tickets card */
+    .load-tickets-card { margin-bottom: 0; }
+    .load-tickets-card .input-with-btn { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+    .load-tickets-card .input-with-btn input { flex: 1; }
+    .loaded-tickets { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.75rem; }
+    .ticket-chip {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.6rem;
+      padding: 0.4rem 0.65rem;
+      background: var(--app-surface-muted); border: 1px solid var(--app-card-border);
+      border-radius: var(--radius-sm); font-size: 0.85rem;
+    }
+    .ticket-chip-id { font-weight: 700; color: var(--app-text); }
+    .ticket-summary { color: var(--app-text-muted); flex: 1; min-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .view-details-link { font-size: 0.8rem; font-weight: 600; }
+    .open-jira-link { font-size: 0.8rem; color: var(--hyland-blue); font-weight: 600; }
+    .open-jira-link:hover { text-decoration: underline; }
+
+    /* Ticket Detail Overlay */
+    .overlay-panel--ticket-detail {
+      width: 780px; max-width: 94vw; max-height: 88vh;
+      display: flex; flex-direction: column;
+    }
+    .ticket-detail-body { overflow-y: auto; padding: 1.25rem 1.5rem; flex: 1; }
+    .td-meta-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.6rem 1.2rem; margin-bottom: 1.25rem;
+    }
+    .td-meta-item { display: flex; flex-direction: column; gap: 0.15rem; }
+    .td-meta-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--app-text-muted); }
+    .td-meta-value { font-size: 0.88rem; color: var(--app-text); }
+    .td-badge {
+      display: inline-block; font-size: 0.78rem; font-weight: 700;
+      padding: 0.15rem 0.5rem; border-radius: 6px;
+      background: var(--hyland-blue); color: #fff;
+    }
+    .td-section { margin-bottom: 1rem; }
+    .td-section-title { font-size: 0.88rem; font-weight: 700; margin-bottom: 0.35rem; color: var(--app-text); display: flex; align-items: center; gap: 0.5rem; }
+    .td-section-body {
+      white-space: pre-wrap; word-break: break-word; font-size: 0.85rem; line-height: 1.55;
+      background: var(--app-surface-muted); border: 1px solid var(--app-card-border);
+      border-radius: var(--radius-sm); padding: 0.75rem 1rem; max-height: 300px; overflow-y: auto;
+      font-family: inherit; margin: 0;
+    }
+    .td-list { margin: 0.25rem 0 0 1.2rem; font-size: 0.85rem; line-height: 1.6; }
+    .td-comment { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: var(--app-surface-muted); border-radius: var(--radius-sm); border: 1px solid var(--app-card-border); }
+    .td-comment-meta { font-size: 0.76rem; font-weight: 600; color: var(--app-text-muted); }
+    .td-comment-body { white-space: pre-wrap; word-break: break-word; font-size: 0.83rem; line-height: 1.5; margin: 0.25rem 0 0; font-family: inherit; }
+
     @media (max-width: 600px) {
       .form-grid { grid-template-columns: 1fr; }
       .results-toolbar { flex-direction: column; align-items: flex-start; }
-      .overlay-panel--edit, .overlay-panel--publish { width: 98vw; }
+      .overlay-panel--edit, .overlay-panel--publish, .overlay-panel--ticket-detail { width: 98vw; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -783,6 +968,14 @@ export class TestCasesComponent implements OnInit, OnDestroy {
   modelOptions: { label: string; value: string }[] = [];
   selectedModelId = '';
   switchingModel = false;
+
+  ticketIdToAdd = '';
+  loadedTickets: { ticket_id: string; summary: string; _detail?: any }[] = [];
+  loadingTicket = false;
+  ticketDetailOverlayOpen = false;
+  ticketDetailData: any = null;
+  loadingTicketDetails = false;
+  commentsExpanded = false;
 
   private generateAbort: AbortController | null = null;
   private userCancelledGeneration = false;
@@ -905,6 +1098,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
 
   @HostListener('document:keydown.escape')
   onEscapeKey(): void {
+    if (this.ticketDetailOverlayOpen) { this.closeTicketDetails(); return; }
     if (this.editOverlayTc) { this.cancelEditOverlay(); return; }
     if (this.publishReviewOpen) { this.cancelPublishReview(); return; }
   }
@@ -1125,6 +1319,72 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     if (count === 0) return;
     this.items.forEach(tc => { if (tc.approved === false) tc.approved = true; });
     this.toast.success(`${count} test case${count === 1 ? '' : 's'} approved.`);
+  }
+
+  addTicket(): void {
+    const raw = this.ticketIdToAdd.trim();
+    if (!raw) return;
+    const ids = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+    if (!ids.length) return;
+    this.loadingTicket = true;
+    this.ticketIdToAdd = '';
+    let remaining = ids.length;
+    for (const id of ids) {
+      if (this.loadedTickets.some(t => t.ticket_id.toUpperCase() === id.toUpperCase())) {
+        remaining--;
+        if (remaining === 0) this.loadingTicket = false;
+        continue;
+      }
+      this.api.get<any>(`/jira/ticket-info?ticket_id=${encodeURIComponent(id)}`).subscribe({
+        next: (data) => {
+          this.loadedTickets.push({ ticket_id: data.ticket_id, summary: data.summary, _detail: data });
+          if (!this.targetId && this.sourceType === 'jira') {
+            this.targetId = data.ticket_id;
+          }
+          remaining--;
+          if (remaining === 0) this.loadingTicket = false;
+        },
+        error: () => {
+          this.toast.error(`Could not load ticket ${id}`);
+          remaining--;
+          if (remaining === 0) this.loadingTicket = false;
+        },
+      });
+    }
+  }
+
+  removeLoadedTicket(ticketId: string): void {
+    this.loadedTickets = this.loadedTickets.filter(t => t.ticket_id !== ticketId);
+  }
+
+  viewTicketDetails(ticketId: string): void {
+    const cached = this.loadedTickets.find(t => t.ticket_id === ticketId);
+    if (cached?._detail) {
+      this.ticketDetailData = cached._detail;
+      this.ticketDetailOverlayOpen = true;
+      this.commentsExpanded = false;
+      return;
+    }
+    this.loadingTicketDetails = true;
+    this.ticketDetailOverlayOpen = true;
+    this.ticketDetailData = null;
+    this.commentsExpanded = false;
+    this.api.get<any>(`/jira/ticket-info?ticket_id=${encodeURIComponent(ticketId)}`).subscribe({
+      next: (data) => {
+        this.ticketDetailData = data;
+        this.loadingTicketDetails = false;
+      },
+      error: () => {
+        this.toast.error(`Could not load details for ${ticketId}`);
+        this.ticketDetailOverlayOpen = false;
+        this.loadingTicketDetails = false;
+      },
+    });
+  }
+
+  closeTicketDetails(): void {
+    this.ticketDetailOverlayOpen = false;
+    this.ticketDetailData = null;
   }
 
   jiraBrowseUrl(key: string): string {

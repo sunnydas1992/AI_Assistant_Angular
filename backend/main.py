@@ -350,6 +350,18 @@ def api_connection_settings(request: Request):
     return rag.get_connection_settings()
 
 
+@app.get("/api/jira/ticket-info")
+def api_jira_ticket_info(request: Request, ticket_id: str = ""):
+    rag = get_session_rag(request)
+    tid = ticket_id.strip()
+    if not tid:
+        raise HTTPException(status_code=400, detail="ticket_id is required")
+    data = rag.atlassian.get_jira_ticket_structured(tid)
+    if data is None:
+        raise HTTPException(status_code=404, detail=f"Could not fetch ticket {tid}")
+    return data
+
+
 @app.post("/api/init")
 async def api_init(
     request: Request,

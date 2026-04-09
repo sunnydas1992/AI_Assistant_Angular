@@ -83,6 +83,73 @@ class AtlassianService:
         except Exception:
             return None
 
+    def get_jira_ticket_structured(self, ticket_id: str) -> Optional[Dict[str, Any]]:
+        """Return structured Jira fields as a dict (for UI display, not RAG ingestion)."""
+        if not self.jira_client:
+            return None
+        try:
+            issue = self.jira_client.issue(ticket_id)
+            f = issue.fields
+            result: Dict[str, Any] = {
+                "ticket_id": ticket_id,
+                "summary": f.summary or "",
+                "issue_type": f.issuetype.name if hasattr(f, "issuetype") and f.issuetype else "",
+                "status": f.status.name if hasattr(f, "status") and f.status else "",
+                "priority": f.priority.name if hasattr(f, "priority") and f.priority else "",
+                "labels": list(f.labels) if hasattr(f, "labels") and f.labels else [],
+                "components": [c.name for c in f.components] if hasattr(f, "components") and f.components else [],
+                "assignee": f.assignee.displayName if hasattr(f, "assignee") and f.assignee else "",
+                "reporter": f.reporter.displayName if hasattr(f, "reporter") and f.reporter else "",
+                "description": f.description or "",
+                "acceptance_criteria": "",
+                "steps_to_reproduce": "",
+                "environment": f.environment or "" if hasattr(f, "environment") else "",
+                "url": f"/browse/{ticket_id}",
+            }
+            ac_field = self.config.acceptance_criteria_field
+            if hasattr(f, ac_field) and getattr(f, ac_field):
+                result["acceptance_criteria"] = getattr(f, ac_field)
+            steps_field = self.config.steps_to_reproduce_field
+            if hasattr(f, steps_field) and getattr(f, steps_field):
+                result["steps_to_reproduce"] = getattr(f, steps_field)
+
+            linked = []
+            if hasattr(f, "issuelinks") and f.issuelinks:
+                for link in f.issuelinks:
+                    if hasattr(link, "outwardIssue"):
+                        li = link.outwardIssue
+                        linked.append({"relationship": link.type.outward, "key": li.key, "summary": li.fields.summary})
+                    elif hasattr(link, "inwardIssue"):
+                        li = link.inwardIssue
+                        linked.append({"relationship": link.type.inward, "key": li.key, "summary": li.fields.summary})
+            result["linked_issues"] = linked
+
+            subtasks = []
+            if hasattr(f, "subtasks") and f.subtasks:
+                for st in f.subtasks:
+                    status = st.fields.status.name if hasattr(st.fields, "status") else "Unknown"
+                    subtasks.append({"key": st.key, "summary": st.fields.summary, "status": status})
+            result["subtasks"] = subtasks
+
+            attachments = []
+            if hasattr(f, "attachment") and f.attachment:
+                for att in f.attachment:
+                    size_kb = att.size // 1024 if hasattr(att, "size") else 0
+                    attachments.append({"filename": att.filename, "size_kb": size_kb})
+            result["attachments"] = attachments
+
+            comments = []
+            if hasattr(f, "comment") and f.comment and f.comment.comments:
+                for c in f.comment.comments:
+                    author = getattr(c.author, "displayName", "Unknown")
+                    created = c.created[:10] if hasattr(c, "created") else ""
+                    comments.append({"author": author, "date": created, "body": c.body.strip()})
+            result["comments"] = comments
+
+            return result
+        except Exception:
+            return None
+
     def _format_jira_issue(self, issue, ticket_id: str) -> str:
         content = f"Source: Jira Ticket {ticket_id}\n{'='*60}\n"
         content += f"Issue Type: {issue.fields.issuetype.name}\n"

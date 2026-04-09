@@ -46,6 +46,7 @@ interface TicketInfo {
           @for (t of tickets; track t.ticket_id) {
             <div class="ticket-chip">
               <span>{{ t.ticket_id }}</span>
+              <button type="button" class="link-btn view-details-link" (click)="viewTicketDetails(t.ticket_id)">View Details</button>
               @if (jiraServerUrl) {
                 <a [href]="jiraServerUrl + '/browse/' + t.ticket_id" target="_blank" rel="noopener" class="open-jira-link" title="Open in Jira">Open in Jira</a>
               }
@@ -222,6 +223,117 @@ interface TicketInfo {
       </div>
     }
 
+    @if (ticketDetailOverlayOpen) {
+      <div class="overlay-backdrop" (click)="closeTicketDetails()">
+        <div class="overlay-panel overlay-panel--ticket-detail" (click)="$event.stopPropagation()">
+          @if (loadingTicketDetails) {
+            <div class="overlay-body" style="padding:2rem;text-align:center">
+              <span class="loading-spinner"></span> Loading ticket details…
+            </div>
+          } @else if (ticketDetailData) {
+            <div class="overlay-header">
+              <h2 class="overlay-title">{{ ticketDetailData.ticket_id }} — {{ ticketDetailData.summary }}</h2>
+              <button class="overlay-close" (click)="closeTicketDetails()">&times;</button>
+            </div>
+            <div class="overlay-body ticket-detail-body">
+              <div class="td-meta-grid">
+                <div class="td-meta-item"><span class="td-meta-label">Status</span><span class="td-meta-value td-badge">{{ ticketDetailData.status || '—' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Priority</span><span class="td-meta-value">{{ ticketDetailData.priority || '—' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Type</span><span class="td-meta-value">{{ ticketDetailData.issue_type || '—' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Assignee</span><span class="td-meta-value">{{ ticketDetailData.assignee || 'Unassigned' }}</span></div>
+                <div class="td-meta-item"><span class="td-meta-label">Reporter</span><span class="td-meta-value">{{ ticketDetailData.reporter || '—' }}</span></div>
+                @if (ticketDetailData.labels?.length) {
+                  <div class="td-meta-item"><span class="td-meta-label">Labels</span><span class="td-meta-value">{{ ticketDetailData.labels.join(', ') }}</span></div>
+                }
+                @if (ticketDetailData.components?.length) {
+                  <div class="td-meta-item"><span class="td-meta-label">Components</span><span class="td-meta-value">{{ ticketDetailData.components.join(', ') }}</span></div>
+                }
+              </div>
+
+              @if (ticketDetailData.description) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Description</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.description }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.acceptance_criteria) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Acceptance Criteria</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.acceptance_criteria }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.steps_to_reproduce) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Steps to Reproduce</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.steps_to_reproduce }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.environment) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Environment</h4>
+                  <pre class="td-section-body">{{ ticketDetailData.environment }}</pre>
+                </div>
+              }
+              @if (ticketDetailData.linked_issues?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Linked Issues</h4>
+                  <ul class="td-list">
+                    @for (li of ticketDetailData.linked_issues; track li.key) {
+                      <li><strong>{{ li.relationship }}</strong>: {{ li.key }} — {{ li.summary }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (ticketDetailData.subtasks?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Subtasks</h4>
+                  <ul class="td-list">
+                    @for (st of ticketDetailData.subtasks; track st.key) {
+                      <li>{{ st.key }} — {{ st.summary }} <span class="td-badge">{{ st.status }}</span></li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (ticketDetailData.attachments?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">Attachments</h4>
+                  <ul class="td-list">
+                    @for (att of ticketDetailData.attachments; track att.filename) {
+                      <li>{{ att.filename }} ({{ att.size_kb }} KB)</li>
+                    }
+                  </ul>
+                </div>
+              }
+              @if (ticketDetailData.comments?.length) {
+                <div class="td-section">
+                  <h4 class="td-section-title">
+                    Comments ({{ ticketDetailData.comments.length }})
+                    <button type="button" class="link-btn" (click)="commentsExpanded = !commentsExpanded">
+                      {{ commentsExpanded ? 'Hide' : 'Show' }}
+                    </button>
+                  </h4>
+                  @if (commentsExpanded) {
+                    @for (c of ticketDetailData.comments; track c.date + c.author) {
+                      <div class="td-comment">
+                        <span class="td-comment-meta">{{ c.author }} · {{ c.date }}</span>
+                        <pre class="td-comment-body">{{ c.body }}</pre>
+                      </div>
+                    }
+                  }
+                </div>
+              }
+            </div>
+            <div class="overlay-footer">
+              @if (jiraServerUrl && ticketDetailData.ticket_id) {
+                <a [href]="jiraServerUrl + '/browse/' + ticketDetailData.ticket_id" target="_blank" rel="noopener" class="primary">Open in Jira</a>
+              }
+              <button class="secondary" (click)="closeTicketDetails()">Close</button>
+            </div>
+          }
+        </div>
+      </div>
+    }
+
     <app-ai-thinking-overlay
       [open]="loading || loadingTicket || switchingModel"
       [title]="analyzerThinkingTitle"
@@ -353,12 +465,14 @@ interface TicketInfo {
       display: flex; align-items: center; justify-content: center;
       animation: overlayFadeIn 0.2s ease-out both;
     }
-    .overlay-panel--post-jira {
+    .overlay-panel {
       background: var(--app-card-bg); border-radius: var(--radius-md, 12px);
-      box-shadow: 0 12px 48px rgba(0,0,0,0.25); width: 720px; max-width: 92vw;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.25);
       max-height: 88vh; display: flex; flex-direction: column;
+      border: 1px solid var(--app-card-border);
       animation: overlaySlideUp 0.3s cubic-bezier(0.22,1,0.36,1) both;
     }
+    .overlay-panel--post-jira { width: 720px; max-width: 92vw; }
     .overlay-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 1rem 1.25rem; border-bottom: 1px solid var(--app-card-border);
@@ -389,6 +503,39 @@ interface TicketInfo {
       display: flex; justify-content: flex-end; gap: var(--space-sm);
       padding: 0.75rem 1.25rem; border-top: 1px solid var(--app-card-border);
     }
+    .view-details-link { font-size: 0.75rem; font-weight: 600; }
+
+    /* Ticket Detail Overlay */
+    .overlay-panel--ticket-detail {
+      width: 780px; max-width: 94vw; max-height: 88vh;
+      display: flex; flex-direction: column;
+    }
+    .ticket-detail-body { overflow-y: auto; padding: 1.25rem 1.5rem; flex: 1; }
+    .td-meta-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.6rem 1.2rem; margin-bottom: 1.25rem;
+    }
+    .td-meta-item { display: flex; flex-direction: column; gap: 0.15rem; }
+    .td-meta-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--app-text-muted); }
+    .td-meta-value { font-size: 0.88rem; color: var(--app-text); }
+    .td-badge {
+      display: inline-block; font-size: 0.78rem; font-weight: 700;
+      padding: 0.15rem 0.5rem; border-radius: 6px;
+      background: var(--hyland-blue); color: #fff;
+    }
+    .td-section { margin-bottom: 1rem; }
+    .td-section-title { font-size: 0.88rem; font-weight: 700; margin-bottom: 0.35rem; color: var(--app-text); display: flex; align-items: center; gap: 0.5rem; }
+    .td-section-body {
+      white-space: pre-wrap; word-break: break-word; font-size: 0.85rem; line-height: 1.55;
+      background: var(--app-surface-muted); border: 1px solid var(--app-card-border);
+      border-radius: var(--radius-sm); padding: 0.75rem 1rem; max-height: 300px; overflow-y: auto;
+      font-family: inherit; margin: 0;
+    }
+    .td-list { margin: 0.25rem 0 0 1.2rem; font-size: 0.85rem; line-height: 1.6; }
+    .td-comment { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: var(--app-surface-muted); border-radius: var(--radius-sm); border: 1px solid var(--app-card-border); }
+    .td-comment-meta { font-size: 0.76rem; font-weight: 600; color: var(--app-text-muted); }
+    .td-comment-body { white-space: pre-wrap; word-break: break-word; font-size: 0.83rem; line-height: 1.5; margin: 0.25rem 0 0; font-family: inherit; }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
@@ -422,6 +569,10 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   postToJiraOverlayOpen = false;
   postToJiraDraft = '';
   postingToJira = false;
+  ticketDetailOverlayOpen = false;
+  ticketDetailData: any = null;
+  loadingTicketDetails = false;
+  commentsExpanded = false;
   private lastSentMessage = '';
   private lastQuickActionKey = '';
 
@@ -447,6 +598,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
 
   @HostListener('document:keydown.escape')
   onEscapeKey(): void {
+    if (this.ticketDetailOverlayOpen) { this.closeTicketDetails(); return; }
     if (this.postToJiraOverlayOpen) { this.cancelPostToJira(); }
   }
 
@@ -583,6 +735,29 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
       next: () => this.loadState(),
       error: () => {},
     });
+  }
+
+  viewTicketDetails(ticketId: string): void {
+    this.loadingTicketDetails = true;
+    this.ticketDetailOverlayOpen = true;
+    this.ticketDetailData = null;
+    this.commentsExpanded = false;
+    this.api.get<any>(`/jira/ticket-info?ticket_id=${encodeURIComponent(ticketId)}`).subscribe({
+      next: (data) => {
+        this.ticketDetailData = data;
+        this.loadingTicketDetails = false;
+      },
+      error: () => {
+        this.toast.error(`Could not load details for ${ticketId}`);
+        this.ticketDetailOverlayOpen = false;
+        this.loadingTicketDetails = false;
+      },
+    });
+  }
+
+  closeTicketDetails(): void {
+    this.ticketDetailOverlayOpen = false;
+    this.ticketDetailData = null;
   }
 
   onFileSelect(e: Event): void {
