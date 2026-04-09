@@ -65,8 +65,8 @@ export interface TestCaseItem {
     <header class="page-header">
       <h1 class="page-title">Generate Test Cases</h1>
       <p class="page-subtitle">Generate test cases from a Jira ticket or Confluence page. Edit, select, and publish only what you need to Xray.</p>
-      @if (targetId) {
-        <p class="context-line">Source: {{ sourceType === 'jira' ? 'Jira' : 'Confluence' }} — {{ targetId }}</p>
+      @if (sourceLoaded && sourceInfo) {
+        <p class="context-line">Source: {{ sourceType === 'jira' ? 'Jira' : 'Confluence' }} — {{ sourceInfo.ticket_id }}</p>
       }
       @if (modelOptions.length) {
         <div class="model-switcher-strip">
@@ -89,82 +89,87 @@ export interface TestCaseItem {
       }
     </header>
 
-    <div class="card form-card load-tickets-card">
-      <h3 class="card-title">Load Tickets</h3>
-      <div class="input-with-btn">
-        <input [(ngModel)]="ticketIdToAdd" placeholder="PROJ-123, PROJ-456" (keyup.enter)="addTicket()" />
-        <button class="primary" (click)="addTicket()" [disabled]="loadingTicket || !ticketIdToAdd.trim()">
-          @if (loadingTicket) { <span class="loading-spinner"></span> }
-          Load
-        </button>
-      </div>
-      @if (loadedTickets.length) {
-        <div class="loaded-tickets">
-          @for (t of loadedTickets; track t.ticket_id) {
-            <div class="ticket-chip">
-              <span class="ticket-chip-id">{{ t.ticket_id }}</span>
-              <span class="ticket-summary">{{ t.summary }}</span>
-              <button type="button" class="link-btn view-details-link" (click)="viewTicketDetails(t.ticket_id)">View Details</button>
-              @if (jiraServerUrl) {
-                <a [href]="jiraBrowseUrl(t.ticket_id)" target="_blank" rel="noopener" class="open-jira-link">Open in Jira</a>
-              }
-              <button type="button" class="icon-btn" (click)="removeLoadedTicket(t.ticket_id)" title="Remove">&times;</button>
-            </div>
-          }
-        </div>
-      }
-    </div>
-
     <div class="card form-card">
       <h3 class="card-title">Source &amp; Format</h3>
-      <div class="form-grid">
-        <div class="form-section">
-          <span class="form-section-label">Source type</span>
-          <select [(ngModel)]="sourceType">
-            <option value="jira">Jira ticket</option>
-            <option value="confluence">Confluence page</option>
-          </select>
+
+      <!-- Phase 1: select source and load -->
+      @if (!sourceLoaded) {
+        <div class="form-grid source-phase">
+          <div class="form-section">
+            <span class="form-section-label">Source type</span>
+            <select [(ngModel)]="sourceType" (ngModelChange)="changeSource()">
+              <option value="jira">Jira ticket</option>
+              <option value="confluence">Confluence page</option>
+            </select>
+          </div>
+          <div class="form-section form-section-wide">
+            <span class="form-section-label">{{ sourceType === 'jira' ? 'Ticket ID or URL' : 'Confluence page URL or ID' }}</span>
+            <div class="input-with-btn">
+              <input [(ngModel)]="targetId" [placeholder]="sourceType === 'jira' ? 'e.g. PROJ-123 or full URL' : 'Page URL or ID'" (keyup.enter)="loadSource()" />
+              <button class="primary" (click)="loadSource()" [disabled]="loadingSource || !targetId.trim()">
+                @if (loadingSource) { <span class="loading-spinner"></span> }
+                Load
+              </button>
+            </div>
+          </div>
         </div>
-        <div class="form-section form-section-wide">
-          <span class="form-section-label">{{ sourceType === 'jira' ? 'Ticket ID or URL' : 'Confluence page URL or ID' }}</span>
-          <input [(ngModel)]="targetId" [placeholder]="sourceType === 'jira' ? 'e.g. PROJ-123 or full URL' : 'Page URL or ID'" />
-        </div>
-        <div class="form-section">
-          <span class="form-section-label" title="BDD: Gherkin (Feature/Scenario). Xray: Test Summary and steps table for Jira.">Output format</span>
-          <select [(ngModel)]="outputFormat">
-            <option value="BDD (Gherkin)">BDD (Gherkin)</option>
-            <option value="Xray Jira Test Format">Xray Jira Test Format</option>
-          </select>
-        </div>
-        <div class="form-section">
-          <span class="form-section-label">Xray project key</span>
-          <input [(ngModel)]="xrayProjectKey" placeholder="e.g. PROJ" class="project-input" />
-        </div>
-      </div>
-      <div class="form-section form-section-full">
-        <span class="form-section-label">Instructions for Generation (Optional)</span>
-        <div class="preset-chips">
-          @for (p of instructionPresets; track p.label) {
-            <button type="button" class="chip" (click)="applyInstructionPreset(p.value)">{{ p.label }}</button>
+      }
+
+      <!-- Info strip: shown after source loads successfully -->
+      @if (sourceLoaded && sourceInfo) {
+        <div class="source-info-strip">
+          <span class="strip-id">{{ sourceInfo.ticket_id }}</span>
+          <span class="strip-summary">{{ sourceInfo.summary }}</span>
+          @if (sourceType === 'jira') {
+            <button type="button" class="link-btn view-details-link" (click)="viewTicketDetails(sourceInfo.ticket_id)">View Details</button>
           }
+          @if (sourceType === 'jira' && jiraServerUrl) {
+            <a [href]="jiraBrowseUrl(sourceInfo.ticket_id)" target="_blank" rel="noopener" class="open-jira-link">Open in Jira</a>
+          }
+          <button type="button" class="link-btn change-source-btn" (click)="changeSource()">Change</button>
         </div>
-        <textarea [(ngModel)]="userInstructions" placeholder="e.g. Consider accessibility tests; include performance scenarios; focus on edge cases; add security checks…" rows="3" class="instructions-input"></textarea>
-        <p class="hint">These instructions are followed when generating test cases. Leave empty for default behavior.</p>
-        <p class="hint xray-dup-hint">With a project key set, use <strong>Check Xray for duplicates</strong> on the results to find existing Jira Tests with the same summary before publishing.</p>
-      </div>
-      <label class="checkbox-label" title="When enabled, similar tickets and docs from the KB are used as context when generating test cases">
-        <input type="checkbox" [(ngModel)]="useKnowledgeBase" />
-        Use Knowledge Base When Generating
-      </label>
-      <div class="form-actions">
-        <button class="primary" (click)="generate()" [disabled]="loading">
-          @if (loading) { <span class="loading-spinner"></span> }
-          {{ loading ? 'Generating…' : 'Generate Test Cases' }}
-        </button>
-        <button class="secondary" (click)="clearAll()" [disabled]="loading">Clear</button>
-      </div>
-      @if (message) {
-        <div class="message" [class.error]="!messageOk" [class.success]="messageOk">{{ message }}</div>
+      }
+
+      <!-- Phase 2: configure and generate (only after source loaded) -->
+      @if (sourceLoaded) {
+        <div class="form-grid config-phase">
+          <div class="form-section">
+            <span class="form-section-label" title="BDD: Gherkin (Feature/Scenario). Xray: Test Summary and steps table for Jira.">Output format</span>
+            <select [(ngModel)]="outputFormat">
+              <option value="BDD (Gherkin)">BDD (Gherkin)</option>
+              <option value="Xray Jira Test Format">Xray Jira Test Format</option>
+            </select>
+          </div>
+          <div class="form-section">
+            <span class="form-section-label">Xray project key</span>
+            <input [(ngModel)]="xrayProjectKey" placeholder="e.g. PROJ" class="project-input" />
+          </div>
+        </div>
+        <div class="form-section form-section-full">
+          <span class="form-section-label">Instructions for Generation (Optional)</span>
+          <div class="preset-chips">
+            @for (p of instructionPresets; track p.label) {
+              <button type="button" class="chip" (click)="applyInstructionPreset(p.value)">{{ p.label }}</button>
+            }
+          </div>
+          <textarea [(ngModel)]="userInstructions" placeholder="e.g. Consider accessibility tests; include performance scenarios; focus on edge cases; add security checks…" rows="3" class="instructions-input"></textarea>
+          <p class="hint">These instructions are followed when generating test cases. Leave empty for default behavior.</p>
+          <p class="hint xray-dup-hint">With a project key set, use <strong>Check Xray for duplicates</strong> on the results to find existing Jira Tests with the same summary before publishing.</p>
+        </div>
+        <label class="checkbox-label" title="When enabled, similar tickets and docs from the KB are used as context when generating test cases">
+          <input type="checkbox" [(ngModel)]="useKnowledgeBase" />
+          Use Knowledge Base When Generating
+        </label>
+        <div class="form-actions">
+          <button class="primary" (click)="generate()" [disabled]="loading">
+            @if (loading) { <span class="loading-spinner"></span> }
+            {{ loading ? 'Generating…' : 'Generate Test Cases' }}
+          </button>
+          <button class="secondary" (click)="clearAll()" [disabled]="loading">Clear</button>
+        </div>
+        @if (message) {
+          <div class="message" [class.error]="!messageOk" [class.success]="messageOk">{{ message }}</div>
+        }
       }
     </div>
 
@@ -874,22 +879,29 @@ export interface TestCaseItem {
     .publish-row-toggle { font-size: 0.82rem; flex-shrink: 0; }
     .publish-row-preview { margin-top: 0.5rem; max-height: 200px; overflow-y: auto; font-size: 0.82rem; }
 
-    /* Load Tickets card */
-    .load-tickets-card { margin-bottom: 0; }
-    .load-tickets-card .input-with-btn { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
-    .load-tickets-card .input-with-btn input { flex: 1; }
-    .loaded-tickets { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.75rem; }
-    .ticket-chip {
-      display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem 0.6rem;
-      padding: 0.4rem 0.65rem;
+    /* Source phase input row */
+    .source-phase .input-with-btn { display: flex; gap: 0.5rem; }
+    .source-phase .input-with-btn input { flex: 1; }
+
+    /* Source info strip */
+    .source-info-strip {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 0.75rem;
+      padding: 0.55rem 0.85rem; margin-bottom: 0.75rem;
       background: var(--app-surface-muted); border: 1px solid var(--app-card-border);
-      border-radius: var(--radius-sm); font-size: 0.85rem;
+      border-radius: var(--radius-sm); font-size: 0.88rem;
+      animation: fadeSlideIn 0.25s ease-out;
     }
-    .ticket-chip-id { font-weight: 700; color: var(--app-text); }
-    .ticket-summary { color: var(--app-text-muted); flex: 1; min-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .strip-id { font-weight: 700; color: var(--app-text); }
+    .strip-summary { color: var(--app-text-muted); flex: 1; min-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .view-details-link { font-size: 0.8rem; font-weight: 600; }
     .open-jira-link { font-size: 0.8rem; color: var(--hyland-blue); font-weight: 600; }
     .open-jira-link:hover { text-decoration: underline; }
+    .change-source-btn { font-size: 0.8rem; font-weight: 600; color: var(--app-text-muted); }
+    .change-source-btn:hover { color: var(--app-text); }
+    @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Config phase spacing */
+    .config-phase { margin-top: 0; }
 
     /* Ticket Detail Overlay */
     .overlay-panel--ticket-detail {
@@ -969,9 +981,9 @@ export class TestCasesComponent implements OnInit, OnDestroy {
   selectedModelId = '';
   switchingModel = false;
 
-  ticketIdToAdd = '';
-  loadedTickets: { ticket_id: string; summary: string; _detail?: any }[] = [];
-  loadingTicket = false;
+  sourceLoaded = false;
+  sourceInfo: { ticket_id: string; summary: string; _detail?: any } | null = null;
+  loadingSource = false;
   ticketDetailOverlayOpen = false;
   ticketDetailData: any = null;
   loadingTicketDetails = false;
@@ -996,7 +1008,8 @@ export class TestCasesComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit(): void {
-    if (this.prefill.hasPrefill()) {
+    const hasPrefill = this.prefill.hasPrefill();
+    if (hasPrefill) {
       const { sourceType, targetId } = this.prefill.consumePrefill();
       this.sourceType = sourceType;
       this.targetId = targetId;
@@ -1004,8 +1017,15 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     this.api.get<{ jira_server?: string }>('/connection-settings').subscribe({
       next: (res) => {
         this.jiraServerUrl = (res?.jira_server || '').replace(/\/$/, '');
+        if (hasPrefill && this.targetId) {
+          this.loadSource();
+        }
       },
-      error: () => {},
+      error: () => {
+        if (hasPrefill && this.targetId) {
+          this.loadSource();
+        }
+      },
     });
     this.loadCurrentModel();
   }
@@ -1321,46 +1341,37 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     this.toast.success(`${count} test case${count === 1 ? '' : 's'} approved.`);
   }
 
-  addTicket(): void {
-    const raw = this.ticketIdToAdd.trim();
-    if (!raw) return;
-    const ids = raw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
-    if (!ids.length) return;
-    this.loadingTicket = true;
-    this.ticketIdToAdd = '';
-    let remaining = ids.length;
-    for (const id of ids) {
-      if (this.loadedTickets.some(t => t.ticket_id.toUpperCase() === id.toUpperCase())) {
-        remaining--;
-        if (remaining === 0) this.loadingTicket = false;
-        continue;
-      }
-      this.api.get<any>(`/jira/ticket-info?ticket_id=${encodeURIComponent(id)}`).subscribe({
-        next: (data) => {
-          this.loadedTickets.push({ ticket_id: data.ticket_id, summary: data.summary, _detail: data });
-          if (!this.targetId && this.sourceType === 'jira') {
-            this.targetId = data.ticket_id;
-          }
-          remaining--;
-          if (remaining === 0) this.loadingTicket = false;
-        },
-        error: () => {
-          this.toast.error(`Could not load ticket ${id}`);
-          remaining--;
-          if (remaining === 0) this.loadingTicket = false;
-        },
-      });
+  loadSource(): void {
+    const id = this.targetId.trim();
+    if (!id) return;
+    if (this.sourceType === 'confluence') {
+      this.sourceLoaded = true;
+      this.sourceInfo = { ticket_id: id, summary: 'Confluence page' };
+      return;
     }
+    this.loadingSource = true;
+    this.api.get<any>(`/jira/ticket-info?ticket_id=${encodeURIComponent(id)}`).subscribe({
+      next: (data) => {
+        this.sourceInfo = { ticket_id: data.ticket_id, summary: data.summary, _detail: data };
+        this.targetId = data.ticket_id;
+        this.sourceLoaded = true;
+        this.loadingSource = false;
+      },
+      error: () => {
+        this.toast.error(`Could not load ticket ${id}`);
+        this.loadingSource = false;
+      },
+    });
   }
 
-  removeLoadedTicket(ticketId: string): void {
-    this.loadedTickets = this.loadedTickets.filter(t => t.ticket_id !== ticketId);
+  changeSource(): void {
+    this.sourceLoaded = false;
+    this.sourceInfo = null;
   }
 
   viewTicketDetails(ticketId: string): void {
-    const cached = this.loadedTickets.find(t => t.ticket_id === ticketId);
-    if (cached?._detail) {
-      this.ticketDetailData = cached._detail;
+    if (this.sourceInfo?._detail) {
+      this.ticketDetailData = this.sourceInfo._detail;
       this.ticketDetailOverlayOpen = true;
       this.commentsExpanded = false;
       return;
@@ -1706,6 +1717,9 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     this.items = [];
     this.generatedText = '';
     this.globalFeedback = '';
+    this.sourceLoaded = false;
+    this.sourceInfo = null;
+    this.targetId = '';
     this.messageOk = true;
     this.message = 'Cleared. You can generate new test cases.';
   }
