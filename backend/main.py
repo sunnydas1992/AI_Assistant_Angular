@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Tuple
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -131,6 +132,24 @@ def get_session_id(request: Request) -> str:
     return request.session["sid"]
 
 
+def resolve_user_id(jira_username: str) -> str:
+    """Derive a stable user identity from the Jira username (email).
+
+    Today this hashes the email; when SSO/OAuth is added, swap this to
+    derive the identity from the auth token instead.
+    """
+    normalized = jira_username.strip().lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def get_user_id(request: Request) -> str:
+    """Return the user_id stored in the session cookie, or raise if not initialized."""
+    uid = request.session.get("user_id")
+    if not uid:
+        raise HTTPException(status_code=400, detail="Not initialized. Go to Configuration and click Initialize.")
+    return uid
+
+
 def get_session_rag(request: Request) -> JiraRAG:
     """Return RAG for the current session or raise if not initialized."""
     sid = get_session_id(request)
@@ -172,7 +191,7 @@ def _run_init_sync(
     temperature: float,
     inference_profile_id: Optional[str],
     conversations_dir: str,
-    sid: str,
+    user_id: str,
     shared_embedding_fn=None,
 ) -> Tuple[JiraRAG, ChatService, ConversationStore]:
     """
@@ -199,9 +218,9 @@ def _run_init_sync(
         vector_store=rag.vector_store,
         use_rag=False,
     )
-    session_conversations_dir = os.path.join(conversations_dir, sid)
-    os.makedirs(session_conversations_dir, exist_ok=True)
-    store = ConversationStore(session_conversations_dir)
+    user_conversations_dir = os.path.join(conversations_dir, user_id)
+    os.makedirs(user_conversations_dir, exist_ok=True)
+    store = ConversationStore(user_conversations_dir)
     return (rag, chat, store)
 
 
@@ -319,12 +338,18 @@ def health():
 def api_init_status(request: Request):
     """Return whether the current session is fully initialized (RAG + LLM ready)."""
     sid = get_session_id(request)
+    user_id = request.session.get("user_id", "")
     rag = _rag_by_sid.get(sid)
     if rag is None:
-        return {"initialized": False, "reason": "not_initialized"}
+        return {"initialized": False, "reason": "not_initialized", "user_id": user_id}
     if not rag.aws_service.is_initialized:
-        return {"initialized": False, "reason": "llm_not_ready", "connected": True}
-    return {"initialized": True, "connected": True, "current_model_id": getattr(rag.aws_service, "bedrock_model", None)}
+        return {"initialized": False, "reason": "llm_not_ready", "connected": True, "user_id": user_id}
+    return {
+        "initialized": True,
+        "connected": True,
+        "current_model_id": getattr(rag.aws_service, "bedrock_model", None),
+        "user_id": user_id,
+    }
 
 
 @app.post("/api/disconnect")
@@ -344,10 +369,13 @@ def api_disconnect(request: Request):
 def api_connection_settings(request: Request):
     """Return current connection settings for the Config UI (no API token). When not initialized, returns empty strings."""
     sid = get_session_id(request)
+    user_id = request.session.get("user_id", "")
     rag = _rag_by_sid.get(sid)
     if rag is None:
-        return {"jira_server": "", "jira_username": "", "aws_region": "us-east-1", "aws_profile": ""}
-    return rag.get_connection_settings()
+        return {"jira_server": "", "jira_username": "", "aws_region": "us-east-1", "aws_profile": "", "user_id": user_id}
+    settings = rag.get_connection_settings()
+    settings["user_id"] = user_id
+    return settings
 
 
 @app.get("/api/jira/ticket-info")
@@ -381,7 +409,7 @@ async def api_init(
     sid = get_session_id(request)
     if not _check_heavy_rate_limit(sid):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
-    logger.info("Init requested session_id=%s jira_server=%s aws_region=%s", sid[:8], (jira_server or "").strip()[:50], aws_region)
+    logger.info("Init requested session_id=%s jira_user=%s aws_region=%s", sid[:8], (jira_username or "").strip()[:30], aws_region)
     jira_server = (jira_server or "").strip()
     jira_username = (jira_username or "").strip()
     jira_api_token = (jira_api_token or "").strip()
@@ -394,9 +422,10 @@ async def api_init(
         raise HTTPException(status_code=400, detail="Atlassian API token is required.")
     if not aws_profile:
         raise HTTPException(status_code=400, detail="AWS profile is required.")
+    user_id = resolve_user_id(jira_username)
+    request.session["user_id"] = user_id
     base_persist = os.path.join(os.path.dirname(__file__), "..", persist_directory) if not os.path.isabs(persist_directory) else persist_directory
-    # Per-session ChromaDB path to avoid contention and isolate KB per user
-    persist_path = os.path.join(base_persist, sid)
+    persist_path = os.path.join(base_persist, user_id)
     inference_profile_id_val = inference_profile_id.strip() or None
     try:
         async with _get_heavy_semaphore():
@@ -419,7 +448,7 @@ async def api_init(
                 temperature,
                 inference_profile_id_val,
                 _conversations_dir,
-                sid,
+                user_id,
                 shared_embedding_fn,
             )
         # If re-init (session already had RAG) but new Bedrock failed, keep the previous RAG so user can still use the app.
@@ -440,8 +469,8 @@ async def api_init(
             _conversation_store_by_sid[sid] = store
         _session_last_used[sid] = time.time()
         logger.info(
-            "Init success session_id=%s bedrock_initialized=%s jira_connected=%s confluence_connected=%s",
-            sid[:8], rag.aws_service.is_initialized, rag.atlassian.is_jira_connected, rag.atlassian.is_confluence_connected,
+            "Init success session_id=%s user_id=%s bedrock_initialized=%s jira_connected=%s confluence_connected=%s",
+            sid[:8], user_id[:8], rag.aws_service.is_initialized, rag.atlassian.is_jira_connected, rag.atlassian.is_confluence_connected,
         )
         return {
             "ok": True,
