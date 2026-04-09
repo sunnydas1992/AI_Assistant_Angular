@@ -31,98 +31,121 @@ interface TicketInfo {
       <p class="page-subtitle">Chat with AI to understand tickets, analyze logs, and get technical insights.</p>
     </header>
 
-    <div class="analyzer-layout">
-      <aside class="context-panel card">
-        <h2 class="panel-section-title">Load Tickets</h2>
-        <div class="form-section">
-          <span class="form-section-label">Ticket IDs</span>
-          <div class="input-with-btn">
-            <input [(ngModel)]="ticketIdToAdd" placeholder="PROJ-123, PROJ-456" (keyup.enter)="addTicket()" />
-            <button class="primary" (click)="addTicket()" [disabled]="loadingTicket">Load</button>
-          </div>
+    <!-- ── Context Toolbar ── -->
+    <div class="context-toolbar card">
+      <div class="toolbar-group toolbar-tickets">
+        <label class="toolbar-label">Tickets</label>
+        <div class="input-with-btn">
+          <input [(ngModel)]="ticketIdToAdd" placeholder="PROJ-123, PROJ-456" (keyup.enter)="addTicket()" />
+          <button class="primary" (click)="addTicket()" [disabled]="loadingTicket">Load</button>
         </div>
-        @if (tickets.length) {
-          <p class="label">Loaded Tickets</p>
-          @for (t of tickets; track t.ticket_id) {
-            <div class="ticket-chip">
-              <span>{{ t.ticket_id }}</span>
-              <button type="button" class="link-btn view-details-link" (click)="viewTicketDetails(t.ticket_id)">View Details</button>
-              @if (jiraServerUrl) {
-                <a [href]="jiraServerUrl + '/browse/' + t.ticket_id" target="_blank" rel="noopener" class="open-jira-link" title="Open in Jira">Open in Jira</a>
-              }
-              <button type="button" class="icon-btn" (click)="removeTicket(t.ticket_id)" title="Remove">×</button>
-            </div>
+      </div>
+
+      <span class="toolbar-divider"></span>
+
+      <div class="toolbar-group toolbar-attach">
+        <input type="file" #fileInput multiple (change)="onFileSelect($event)" class="file-input-hidden" accept="image/*,.pdf,.doc,.docx,.txt" />
+        <button type="button" class="secondary toolbar-attach-btn" (click)="fileInput.click()" title="Attach files or paste images in the chat">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          Attach
+        </button>
+      </div>
+
+      <span class="toolbar-divider"></span>
+
+      <div class="toolbar-group toolbar-model">
+        <label class="toolbar-label">Model</label>
+        <select [(ngModel)]="selectedModelId" (ngModelChange)="switchModel()" class="model-select" [disabled]="switchingModel" title="{{ modelOptions.length }} models available">
+          @for (opt of modelOptions; track opt.value) {
+            <option [value]="opt.value">{{ opt.label }}</option>
           }
-          <button type="button" class="secondary gen-tc-btn" (click)="goToGenerateTestCases()">
-            Generate Test Cases from Ticket
+        </select>
+        <button type="button" class="icon-btn-sm" (click)="loadModels()" [disabled]="switchingModel" title="Refresh model list">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        </button>
+      </div>
+
+      <label class="toolbar-kb-toggle" title="Use Knowledge Base as additional context">
+        <input type="checkbox" [(ngModel)]="useRag" (ngModelChange)="toggleRag()" />
+        <span>KB</span>
+      </label>
+
+      <span class="toolbar-spacer"></span>
+
+      <div class="toolbar-group toolbar-convo">
+        <input [(ngModel)]="conversationTitle" placeholder="Session title" class="convo-title-input" title="Optional title for saving" />
+        <button class="secondary toolbar-sm-btn" (click)="saveConversation()" [disabled]="!messages.length" title="Save conversation">Save</button>
+        <button class="secondary toolbar-sm-btn" (click)="clearChat()" [disabled]="!messages.length && !tickets.length" title="Clear chat and tickets">Clear</button>
+        <div class="history-wrap">
+          <button type="button" class="secondary toolbar-sm-btn" (click)="historyOpen = !historyOpen; $event.stopPropagation()" title="Previous sessions">
+            History
+            @if (conversations.length) { <span class="history-badge">{{ conversations.length }}</span> }
           </button>
-        }
-
-        <h2 class="panel-section-title">Attachments</h2>
-        <div class="form-section">
-          <span class="form-section-label">Files</span>
-          <div class="file-upload-wrap">
-            <input type="file" #fileInput multiple (change)="onFileSelect($event)" class="file-input-hidden" accept="image/*,.pdf,.doc,.docx,.txt" />
-            <button type="button" class="secondary attach-files-btn" (click)="fileInput.click()">
-              Choose File
-            </button>
-          </div>
-          <p class="hint-inline">Or paste an image (Ctrl+V) in the chat box below.</p>
-        </div>
-        @if (attachments.length) {
-          @for (a of attachments; track a.name) {
-            <div class="attachment-chip">
-              <span>{{ a.name }}</span>
-              <button type="button" class="icon-btn" (click)="removeAttachment(a.name)">×</button>
+          @if (historyOpen) {
+            <div class="history-dropdown" (click)="$event.stopPropagation()">
+              <div class="history-dropdown-header">
+                <span>Previous Sessions</span>
+                <button type="button" class="icon-btn" (click)="historyOpen = false">&times;</button>
+              </div>
+              @if (conversations.length) {
+                @for (c of conversations; track c.id) {
+                  <div class="convo-row">
+                    <span class="convo-title">{{ c.title || c.id }}</span>
+                    <button type="button" class="link-btn" (click)="loadConversation(c.id); historyOpen = false">Load</button>
+                    <button type="button" class="link-btn danger-link" (click)="deleteConversation(c.id)">Delete</button>
+                  </div>
+                }
+              } @else {
+                <p class="history-empty">No saved sessions yet.</p>
+              }
             </div>
           }
-        }
+        </div>
+      </div>
+    </div>
+    @if (switchingModel) {
+      <p class="switching-hint">Switching to selected model, please wait…</p>
+    }
 
-        <h2 class="panel-section-title">AI Model</h2>
-        <div class="form-section">
-          <span class="form-section-label">Model</span>
-          <select [(ngModel)]="selectedModelId" (ngModelChange)="switchModel()" class="model-select" [disabled]="switchingModel" title="{{ modelOptions.length }} models – scroll to see all">
-            @for (opt of modelOptions; track opt.value) {
-              <option [value]="opt.value">{{ opt.label }}</option>
+    <!-- ── Ticket / Attachment Strip ── -->
+    @if (tickets.length || attachments.length) {
+      <div class="ticket-strip">
+        @for (t of tickets; track t.ticket_id) {
+          <div class="ticket-chip">
+            <span class="chip-id">{{ t.ticket_id }}</span>
+            <button type="button" class="link-btn view-details-link" (click)="viewTicketDetails(t.ticket_id)">View Details</button>
+            @if (jiraServerUrl) {
+              <a [href]="jiraServerUrl + '/browse/' + t.ticket_id" target="_blank" rel="noopener" class="open-jira-link" title="Open in Jira">Open in Jira</a>
             }
-          </select>
-          @if (switchingModel) {
-            <span class="hint switching-hint">Switching to selected model, please wait…</span>
-          }
-          <button type="button" class="link-btn refresh-models" (click)="loadModels()" [disabled]="switchingModel">Refresh Models</button>
-        </div>
-        <label class="checkbox-label">
-          <input type="checkbox" [(ngModel)]="useRag" (ngModelChange)="toggleRag()" />
-          Use Knowledge Base
-        </label>
-
-        <h2 class="panel-section-title">Conversation</h2>
-        <div class="form-section">
-          <span class="form-section-label">Title (Optional)</span>
-          <input [(ngModel)]="conversationTitle" placeholder="e.g. PROJ-123 summary" class="convo-title-input" />
-        </div>
-        <div class="form-actions">
-          <button class="secondary" (click)="saveConversation()" [disabled]="!messages.length">Save</button>
-          <button class="secondary" (click)="clearChat()" [disabled]="!messages.length && !tickets.length">Clear</button>
-        </div>
-        @if (conversations.length) {
-          <p class="label">Previous Sessions</p>
-          @for (c of conversations; track c.id) {
-            <div class="convo-row">
-              <span class="convo-title">{{ c.title || c.id }}</span>
-              <button type="button" class="link-btn" (click)="loadConversation(c.id)">Load</button>
-              <button type="button" class="link-btn danger-link" (click)="deleteConversation(c.id)">Delete</button>
-            </div>
-          }
+            <button type="button" class="icon-btn chip-remove" (click)="removeTicket(t.ticket_id)" title="Remove">&times;</button>
+          </div>
         }
-      </aside>
-
-      <main class="chat-main card">
-        @if (!tickets.length && !attachments.length) {
-          <p class="hint empty-hint">Load a Jira ticket or add attachments to start. Then ask a question or use a quick action below.</p>
-        } @else if (!messages.length) {
-          <p class="hint empty-hint">No messages yet. Ask a question or use a quick action (e.g. Summarize, Find Gaps).</p>
+        @for (a of attachments; track a.name) {
+          <div class="attachment-chip">
+            <span class="chip-id">{{ a.name }}</span>
+            <button type="button" class="icon-btn chip-remove" (click)="removeAttachment(a.name)" title="Remove">&times;</button>
+          </div>
         }
+        @if (tickets.length) {
+          <button type="button" class="secondary gen-tc-btn" (click)="goToGenerateTestCases()">Generate Test Cases</button>
+        }
+      </div>
+    }
+
+    <!-- ── Empty State ── -->
+    @if (!tickets.length && !attachments.length) {
+      <div class="empty-state">
+        <svg class="empty-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <h3 class="empty-title">Load a Jira ticket to get started</h3>
+        <p class="empty-text">Enter one or more ticket IDs in the toolbar above and click <strong>Load</strong>. You can also attach files for analysis.</p>
+      </div>
+    }
+
+    <!-- ── Chat Area ── -->
+    @if (tickets.length || attachments.length) {
+      <div class="chat-area card">
         @if (lastError) {
           <div class="error-banner">
             <span>{{ lastError }}</span>
@@ -140,6 +163,10 @@ interface TicketInfo {
           <button class="secondary" (click)="quickAction('definition_of_done')" [disabled]="loading || !tickets.length">DoD Checklist</button>
           <button class="secondary" (click)="quickAction('dependencies_blockers')" [disabled]="loading || !tickets.length">Dependencies</button>
         </div>
+
+        @if (!messages.length && !loading) {
+          <p class="hint chat-hint">No messages yet. Ask a question or use a quick action above.</p>
+        }
 
         <div class="chat-messages" #messagesEl>
           @if (loading && !messages.length) {
@@ -185,10 +212,10 @@ interface TicketInfo {
             <button class="secondary" (click)="exportJson()">Export JSON</button>
           </div>
         }
-      </main>
-    </div>
+      </div>
+    }
 
-    <!-- Post to Jira Preview Overlay -->
+    <!-- ── Overlays ── -->
     @if (postToJiraOverlayOpen) {
       <div class="overlay-backdrop" (click)="cancelPostToJira()">
         <div class="overlay-panel overlay-panel--post-jira" (click)="$event.stopPropagation()">
@@ -197,13 +224,18 @@ interface TicketInfo {
             <button type="button" class="overlay-close" (click)="cancelPostToJira()" aria-label="Close">&times;</button>
           </div>
           <div class="overlay-body">
-            <p class="overlay-hint">Review and edit the comment before posting. It will be added to
-              @if (tickets.length === 1) {
-                <strong>{{ tickets[0].ticket_id }}</strong>.
-              } @else {
-                <strong>{{ tickets.length }} loaded tickets</strong>.
-              }
-            </p>
+            @if (tickets.length > 1) {
+              <div class="post-jira-target">
+                <span class="form-section-label">Post to ticket</span>
+                <select [(ngModel)]="postToJiraTargetTicket" class="target-ticket-select">
+                  @for (t of tickets; track t.ticket_id) {
+                    <option [value]="t.ticket_id">{{ t.ticket_id }} — {{ t.summary || t.ticket_id }}</option>
+                  }
+                </select>
+              </div>
+            } @else {
+              <p class="overlay-hint">This comment will be posted to <strong>{{ tickets[0].ticket_id }}</strong>.</p>
+            }
             <div class="post-jira-preview">
               <span class="form-section-label">Comment</span>
               <textarea class="post-jira-textarea" [(ngModel)]="postToJiraDraft" rows="14" placeholder="Comment to post…"></textarea>
@@ -341,104 +373,190 @@ interface TicketInfo {
     />
   `,
   styles: [`
-    .page-header { margin-bottom: var(--space-lg); }
+    /* ── Page header ── */
+    .page-header { margin-bottom: var(--space-md); }
     .page-subtitle { margin: 0; font-size: 0.9rem; }
-    .analyzer-layout { display: flex; gap: var(--space-lg); align-items: flex-start; }
-    .context-panel {
-      width: 240px; flex-shrink: 0; padding: var(--space-lg) var(--space-xl);
-      animation: panelSlideIn 0.45s cubic-bezier(0.22,1,0.36,1) both;
-    }
-    .chat-main {
-      flex: 1; min-width: 360px; display: flex; flex-direction: column; padding: var(--space-lg) var(--space-xl);
-      animation: panelSlideIn 0.45s cubic-bezier(0.22,1,0.36,1) 0.08s both;
-    }
-    @keyframes panelSlideIn {
-      from { opacity: 0; transform: translateY(14px); }
+
+    /* ── Animations ── */
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(10px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-    .panel-section-title { font-size: 0.9rem; font-weight: 700; margin: var(--space-md) 0 var(--space-sm); color: var(--app-text); padding-bottom: var(--space-xs); border-bottom: 1px solid var(--app-card-title-border); }
-    .context-panel .panel-section-title:first-child { margin-top: 0; }
-    .form-section { margin-bottom: var(--space-md); }
-    .form-section-label { font-size: 0.75rem; margin-bottom: var(--space-xs); }
-    .input-with-btn { display: flex; gap: var(--space-sm); align-items: stretch; }
-    .input-with-btn input[type="text"] { flex: 1; margin: 0; }
-    .file-upload-wrap { position: relative; }
-    .file-input-hidden { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
-    .attach-files-btn { min-width: 100px; }
-    .hint-inline { font-size: 0.75rem; color: var(--app-text-muted); margin: var(--space-xs) 0 0; }
-    .input-with-btn button { flex-shrink: 0; }
-    .label { font-size: 0.75rem; font-weight: 600; margin: var(--space-sm) 0 var(--space-xs); color: var(--app-text-muted); }
-    .ticket-chip, .attachment-chip {
-      padding: var(--space-xs) var(--space-sm); font-size: 0.85rem; margin-bottom: var(--space-xs);
-      display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap;
-      animation: chipSlideIn 0.3s cubic-bezier(0.22,1,0.36,1) both;
-    }
     @keyframes chipSlideIn {
-      from { opacity: 0; transform: translateX(-8px) scale(0.95); }
+      from { opacity: 0; transform: translateX(-6px) scale(0.96); }
       to   { opacity: 1; transform: translateX(0) scale(1); }
     }
-    .ticket-chip span { flex: 1; min-width: 0; }
-    .open-jira-link { font-size: 0.75rem; color: var(--hyland-blue); }
-    .gen-tc-btn { margin-top: var(--space-sm); width: 100%; }
-    .convo-title-input { width: 100%; margin: 0; font-size: 0.9rem; }
-    .icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 var(--space-xs); color: var(--app-icon-muted); }
-    .icon-btn:hover { color: #c00; }
-    .model-select { min-height: 2.25rem; }
-    .refresh-models { margin-top: var(--space-xs); font-size: 0.8rem; }
-    .checkbox-label { display: flex; align-items: center; gap: var(--space-sm); margin: var(--space-md) 0 0; font-size: 0.85rem; cursor: pointer; font-weight: 500; }
-    .form-actions { display: flex; gap: var(--space-sm); margin-top: var(--space-sm); }
-    .convo-row { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs); font-size: 0.85rem; }
-    .convo-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .link-btn { background: none; border: none; color: var(--hyland-blue); cursor: pointer; font-size: 0.8rem; padding: 0; }
-    .link-btn:hover { text-decoration: underline; }
-    .danger-link { color: #c00; }
+    @keyframes qaBtnEnter {
+      from { opacity: 0; transform: scale(0.92); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    @keyframes msgSlideRight {
+      from { opacity: 0; transform: translateX(10px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes msgSlideLeft {
+      from { opacity: 0; transform: translateX(-10px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes emptyFadeIn {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Context Toolbar ── */
+    .context-toolbar {
+      display: flex; flex-wrap: wrap; align-items: center;
+      gap: 0.5rem 0.75rem;
+      padding: 0.65rem 1rem;
+      animation: slideIn 0.35s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    .toolbar-group { display: flex; align-items: center; gap: 0.4rem; }
+    .toolbar-label {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--app-text-muted); white-space: nowrap;
+    }
+    .toolbar-tickets .input-with-btn { display: flex; gap: 0.35rem; align-items: stretch; }
+    .toolbar-tickets .input-with-btn input { width: 190px; margin: 0; font-size: 0.85rem; padding: 0.35rem 0.55rem; }
+    .toolbar-tickets .input-with-btn button { flex-shrink: 0; }
+    .toolbar-divider {
+      width: 1px; height: 1.6rem; background: var(--app-card-border); flex-shrink: 0;
+    }
+    .file-input-hidden { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+    .toolbar-attach { position: relative; }
+    .toolbar-attach-btn {
+      display: flex; align-items: center; gap: 0.3rem; font-size: 0.82rem; padding: 0.35rem 0.65rem;
+    }
+    .toolbar-model .model-select {
+      min-height: 1.9rem; font-size: 0.82rem; max-width: 220px; padding: 0.2rem 0.35rem;
+    }
+    .icon-btn-sm {
+      background: none; border: 1px solid var(--app-input-border); border-radius: 5px;
+      cursor: pointer; padding: 0.3rem; color: var(--app-text-muted); display: flex;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .icon-btn-sm:hover { color: var(--hyland-blue); border-color: var(--hyland-blue); }
+    .icon-btn-sm:disabled { opacity: 0.4; cursor: not-allowed; }
+    .toolbar-kb-toggle {
+      display: flex; align-items: center; gap: 0.3rem;
+      font-size: 0.82rem; font-weight: 600; cursor: pointer; white-space: nowrap;
+      color: var(--app-text);
+    }
+    .toolbar-kb-toggle input { margin: 0; }
+    .toolbar-spacer { flex: 1; min-width: 0.5rem; }
+    .toolbar-convo { gap: 0.35rem; }
+    .convo-title-input { width: 130px; margin: 0; font-size: 0.82rem; padding: 0.35rem 0.5rem; }
+    .toolbar-sm-btn { font-size: 0.78rem; padding: 0.3rem 0.55rem; white-space: nowrap; }
+    .switching-hint {
+      font-size: 0.8rem; color: var(--hyland-teal, #13eac1); text-align: center;
+      margin: 0.35rem 0 0; font-weight: 600;
+    }
+
+    /* ── History Dropdown ── */
+    .history-wrap { position: relative; }
+    .history-badge {
+      font-size: 0.65rem; font-weight: 700; background: var(--hyland-blue); color: #fff;
+      padding: 0.05rem 0.35rem; border-radius: 8px; margin-left: 0.2rem; vertical-align: top;
+    }
+    .history-dropdown {
+      position: absolute; top: calc(100% + 6px); right: 0; z-index: 500;
+      width: 300px; max-height: 280px; overflow-y: auto;
+      background: var(--app-card-bg); border: 1px solid var(--app-card-border);
+      border-radius: var(--radius-sm, 8px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+      padding: 0.5rem;
+      animation: slideIn 0.2s ease both;
+    }
+    .history-dropdown-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 0.35rem; margin-bottom: 0.35rem;
+      border-bottom: 1px solid var(--app-card-border);
+      font-size: 0.78rem; font-weight: 700; color: var(--app-text-muted);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .convo-row {
+      display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.15rem;
+      font-size: 0.83rem; border-radius: 4px;
+    }
+    .convo-row:hover { background: var(--app-surface-muted); }
+    .convo-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text); }
+    .history-empty { font-size: 0.82rem; color: var(--app-text-muted); text-align: center; padding: 0.5rem; margin: 0; }
+
+    /* ── Ticket / Attachment Strip ── */
+    .ticket-strip {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+      margin-top: var(--space-sm);
+      animation: slideIn 0.3s cubic-bezier(0.22,1,0.36,1) 0.05s both;
+    }
+    .ticket-chip, .attachment-chip {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.3rem 0.6rem;
+      background: var(--app-surface-muted); border: 1px solid var(--app-card-border);
+      border-radius: var(--radius-sm, 6px); font-size: 0.82rem;
+      animation: chipSlideIn 0.25s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    .chip-id { font-weight: 700; color: var(--app-text); white-space: nowrap; }
+    .view-details-link { font-size: 0.75rem; font-weight: 600; }
+    .open-jira-link { font-size: 0.75rem; color: var(--hyland-blue); font-weight: 600; white-space: nowrap; }
+    .open-jira-link:hover { text-decoration: underline; }
+    .chip-remove {
+      background: none; border: none; cursor: pointer; font-size: 1rem; line-height: 1;
+      padding: 0 0.15rem; color: var(--app-icon-muted);
+    }
+    .chip-remove:hover { color: #c00; }
+    .gen-tc-btn { font-size: 0.8rem; padding: 0.3rem 0.7rem; white-space: nowrap; }
+
+    /* ── Empty State ── */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 3.5rem 2rem; text-align: center;
+      animation: emptyFadeIn 0.5s cubic-bezier(0.22,1,0.36,1) 0.1s both;
+    }
+    .empty-icon { color: var(--app-text-muted); opacity: 0.35; margin-bottom: 1rem; }
+    .empty-title { font-size: 1.15rem; font-weight: 700; color: var(--app-text); margin: 0 0 0.5rem; }
+    .empty-text { font-size: 0.9rem; color: var(--app-text-muted); max-width: 440px; margin: 0; line-height: 1.5; }
+
+    /* ── Chat Area ── */
+    .chat-area {
+      margin-top: var(--space-sm);
+      padding: var(--space-lg) var(--space-xl);
+      display: flex; flex-direction: column;
+      animation: slideIn 0.4s cubic-bezier(0.22,1,0.36,1) 0.08s both;
+    }
     .quick-actions {
       display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-bottom: var(--space-md);
     }
     .quick-actions button {
       transition: all 0.25s cubic-bezier(0.22,1,0.36,1);
-      animation: qaBtnEnter 0.3s cubic-bezier(0.22,1,0.36,1) both;
+      animation: qaBtnEnter 0.25s cubic-bezier(0.22,1,0.36,1) both;
     }
     .quick-actions button:nth-child(1) { animation-delay: 0.02s; }
-    .quick-actions button:nth-child(2) { animation-delay: 0.05s; }
-    .quick-actions button:nth-child(3) { animation-delay: 0.08s; }
-    .quick-actions button:nth-child(4) { animation-delay: 0.11s; }
-    .quick-actions button:nth-child(5) { animation-delay: 0.14s; }
-    .quick-actions button:nth-child(6) { animation-delay: 0.17s; }
-    .quick-actions button:nth-child(7) { animation-delay: 0.20s; }
-    .quick-actions button:nth-child(8) { animation-delay: 0.23s; }
-    @keyframes qaBtnEnter {
-      from { opacity: 0; transform: scale(0.9); }
-      to   { opacity: 1; transform: scale(1); }
-    }
+    .quick-actions button:nth-child(2) { animation-delay: 0.04s; }
+    .quick-actions button:nth-child(3) { animation-delay: 0.06s; }
+    .quick-actions button:nth-child(4) { animation-delay: 0.08s; }
+    .quick-actions button:nth-child(5) { animation-delay: 0.10s; }
+    .quick-actions button:nth-child(6) { animation-delay: 0.12s; }
+    .quick-actions button:nth-child(7) { animation-delay: 0.14s; }
+    .quick-actions button:nth-child(8) { animation-delay: 0.16s; }
     .quick-actions button:hover:not(:disabled) {
       transform: translateY(-2px);
       box-shadow: 0 2px 10px rgba(82,161,255,0.15);
     }
-    .chat-messages { flex: 1; max-height: 380px; overflow-y: auto; margin-bottom: var(--space-md); padding-right: var(--space-sm); }
+    .chat-hint { text-align: center; padding: var(--space-lg) 0; }
+    .chat-messages {
+      flex: 1; max-height: 56vh; overflow-y: auto;
+      margin-bottom: var(--space-md); padding-right: var(--space-sm);
+    }
     .msg {
-      margin-bottom: var(--space-md); padding: var(--space-md); border-radius: var(--radius-sm); font-size: 0.9rem;
-      animation: msgAppear 0.35s cubic-bezier(0.22,1,0.36,1) both;
+      margin-bottom: var(--space-md); padding: var(--space-md);
+      border-radius: var(--radius-sm); font-size: 0.9rem;
     }
     .msg.user {
-      background: var(--app-chat-user-bg); margin-left: var(--space-md);
-      animation-name: msgSlideRight;
+      background: var(--app-chat-user-bg); margin-left: var(--space-xl);
+      animation: msgSlideRight 0.3s cubic-bezier(0.22,1,0.36,1) both;
     }
     .msg.assistant {
-      background: var(--app-surface-muted); margin-right: var(--space-md);
-      animation-name: msgSlideLeft;
-    }
-    @keyframes msgSlideRight {
-      from { opacity: 0; transform: translateX(12px); }
-      to   { opacity: 1; transform: translateX(0); }
-    }
-    @keyframes msgSlideLeft {
-      from { opacity: 0; transform: translateX(-12px); }
-      to   { opacity: 1; transform: translateX(0); }
-    }
-    @keyframes msgAppear {
-      from { opacity: 0; transform: translateY(8px); }
-      to   { opacity: 1; transform: translateY(0); }
+      background: var(--app-surface-muted); margin-right: var(--space-xl);
+      animation: msgSlideLeft 0.3s cubic-bezier(0.22,1,0.36,1) both;
     }
     .msg-content { white-space: pre-wrap; margin-top: var(--space-xs); font-size: 0.9rem; }
     .msg-content ::ng-deep p { margin: var(--space-xs) 0; }
@@ -450,16 +568,26 @@ interface TicketInfo {
     .chat-input-row textarea { flex: 1; min-height: 48px; resize: vertical; font-size: 0.9rem; }
     .export-row { display: flex; gap: var(--space-sm); margin-top: var(--space-md); }
     .hint { color: var(--app-text-muted); font-size: 0.85rem; margin: var(--space-sm) 0; }
-    .switching-hint { display: block; margin-top: 0.25rem; color: var(--hyland-teal, #13eac1); }
-    .empty-hint { padding: var(--space-md); }
-    .error-banner { display: flex; align-items: center; justify-content: space-between; padding: var(--space-sm); background: rgba(200,0,0,0.08); border-left: 4px solid #c00; margin-bottom: var(--space-sm); font-size: 0.9rem; }
+    .error-banner {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--space-sm); background: rgba(200,0,0,0.08);
+      border-left: 4px solid #c00; margin-bottom: var(--space-sm); font-size: 0.9rem;
+    }
     .msg-content-md { white-space: pre-wrap; margin-top: var(--space-xs); font-size: 0.9rem; }
     .msg-content-md ::ng-deep p { margin: var(--space-xs) 0; }
     .msg-content-md ::ng-deep ul, .msg-content-md ::ng-deep ol { margin: 0.25rem 0; padding-left: 1.25rem; }
     .msg-content-md ::ng-deep code { background: var(--app-code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
     .msg.msg-error .msg-content-md { color: #c00; }
 
-    /* ---- Post-to-Jira overlay ---- */
+    /* ── Shared btn / link ── */
+    .link-btn { background: none; border: none; color: var(--hyland-blue); cursor: pointer; font-size: 0.8rem; padding: 0; }
+    .link-btn:hover { text-decoration: underline; }
+    .danger-link { color: #c00; }
+    .icon-btn { background: none; border: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.2rem; color: var(--app-icon-muted); }
+    .icon-btn:hover { color: #c00; }
+    .form-section-label { font-size: 0.75rem; margin-bottom: var(--space-xs); }
+
+    /* ── Overlay base ── */
     .overlay-backdrop {
       position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000;
       display: flex; align-items: center; justify-content: center;
@@ -475,16 +603,27 @@ interface TicketInfo {
     .overlay-panel--post-jira { width: 720px; max-width: 92vw; }
     .overlay-header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 1rem 1.25rem; border-bottom: 1px solid var(--app-card-border);
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--app-card-border); flex-shrink: 0;
     }
     .overlay-title { font-size: 1.1rem; font-weight: 700; margin: 0; }
     .overlay-close {
       background: none; border: none; font-size: 1.5rem; cursor: pointer;
       color: var(--app-text-muted); line-height: 1; padding: 0 0.25rem;
+      border-radius: 4px; transition: color 0.15s, background 0.15s;
     }
-    .overlay-close:hover { color: var(--app-text); }
+    .overlay-close:hover { color: var(--app-text); background: rgba(82,161,255,0.12); }
     .overlay-body { padding: 1rem 1.25rem; overflow-y: auto; flex: 1; min-height: 0; }
     .overlay-hint { font-size: 0.85rem; color: var(--app-text-muted); margin: 0 0 0.75rem; }
+    .overlay-footer {
+      display: flex; justify-content: flex-end; gap: var(--space-sm);
+      padding: 0.75rem 1.25rem; border-top: 1px solid var(--app-card-border); flex-shrink: 0;
+    }
+    .post-jira-target { margin-bottom: 0.75rem; }
+    .target-ticket-select {
+      width: 100%; margin-top: 0.25rem; font-size: 0.88rem; padding: 0.4rem 0.5rem;
+      border-radius: var(--radius-sm, 6px); border: 1px solid var(--app-input-border);
+      background: var(--app-input-bg); color: var(--app-text);
+    }
     .post-jira-preview { margin-bottom: 1rem; }
     .post-jira-textarea {
       width: 100%; font-family: 'Source Sans 3', sans-serif; font-size: 0.9rem;
@@ -499,13 +638,8 @@ interface TicketInfo {
       padding: 0.75rem; min-height: 80px; max-height: 200px; overflow-y: auto;
       background: var(--app-surface-muted); font-size: 0.9rem; white-space: pre-wrap;
     }
-    .overlay-footer {
-      display: flex; justify-content: flex-end; gap: var(--space-sm);
-      padding: 0.75rem 1.25rem; border-top: 1px solid var(--app-card-border);
-    }
-    .view-details-link { font-size: 0.75rem; font-weight: 600; }
 
-    /* Ticket Detail Overlay */
+    /* ── Ticket Detail Overlay ── */
     .overlay-panel--ticket-detail {
       width: 780px; max-width: 94vw; max-height: 88vh;
       display: flex; flex-direction: column;
@@ -535,6 +669,18 @@ interface TicketInfo {
     .td-comment { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: var(--app-surface-muted); border-radius: var(--radius-sm); border: 1px solid var(--app-card-border); }
     .td-comment-meta { font-size: 0.76rem; font-weight: 600; color: var(--app-text-muted); }
     .td-comment-body { white-space: pre-wrap; word-break: break-word; font-size: 0.83rem; line-height: 1.5; margin: 0.25rem 0 0; font-family: inherit; }
+
+    /* ── Responsive ── */
+    @media (max-width: 700px) {
+      .context-toolbar { flex-direction: column; align-items: stretch; }
+      .toolbar-divider { width: 100%; height: 1px; }
+      .toolbar-spacer { display: none; }
+      .toolbar-tickets .input-with-btn input { width: 100%; }
+      .toolbar-convo { flex-wrap: wrap; }
+      .convo-title-input { flex: 1; min-width: 80px; }
+      .history-dropdown { right: auto; left: 0; }
+      .overlay-panel--post-jira, .overlay-panel--ticket-detail { width: 98vw; }
+    }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -569,10 +715,12 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   postToJiraOverlayOpen = false;
   postToJiraDraft = '';
   postingToJira = false;
+  postToJiraTargetTicket = '';
   ticketDetailOverlayOpen = false;
   ticketDetailData: any = null;
   loadingTicketDetails = false;
   commentsExpanded = false;
+  historyOpen = false;
   private lastSentMessage = '';
   private lastQuickActionKey = '';
 
@@ -599,7 +747,8 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   @HostListener('document:keydown.escape')
   onEscapeKey(): void {
     if (this.ticketDetailOverlayOpen) { this.closeTicketDetails(); return; }
-    if (this.postToJiraOverlayOpen) { this.cancelPostToJira(); }
+    if (this.postToJiraOverlayOpen) { this.cancelPostToJira(); return; }
+    if (this.historyOpen) { this.historyOpen = false; }
   }
 
   ngOnInit(): void {
@@ -957,6 +1106,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
 
   postToJira(content: string): void {
     this.postToJiraDraft = content;
+    this.postToJiraTargetTicket = this.tickets.length ? this.tickets[0].ticket_id : '';
     this.postToJiraOverlayOpen = true;
   }
 
@@ -964,12 +1114,17 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
     const content = this.postToJiraDraft.trim();
     if (!content) return;
     this.postingToJira = true;
-    this.api.postForm('/chat/post-to-jira', { content }).subscribe({
-      next: () => {
+    const payload: Record<string, string> = { content };
+    if (this.postToJiraTargetTicket) {
+      payload['ticket_id'] = this.postToJiraTargetTicket;
+    }
+    this.api.postForm('/chat/post-to-jira', payload).subscribe({
+      next: (res: any) => {
         this.postingToJira = false;
         this.postToJiraOverlayOpen = false;
         this.postToJiraDraft = '';
-        this.toast.success('Comment posted to Jira.');
+        const tid = res?.ticket_id || this.postToJiraTargetTicket || '';
+        this.toast.success(tid ? `Comment posted to ${tid}.` : 'Comment posted to Jira.');
       },
       error: () => {
         this.postingToJira = false;
@@ -981,6 +1136,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   cancelPostToJira(): void {
     this.postToJiraOverlayOpen = false;
     this.postToJiraDraft = '';
+    this.postToJiraTargetTicket = '';
     this.postingToJira = false;
   }
 

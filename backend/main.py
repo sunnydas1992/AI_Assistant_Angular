@@ -696,14 +696,18 @@ async def api_chat_switch_model(rag: JiraRAG = Depends(get_session_rag), model_i
 
 
 @app.post("/api/chat/post-to-jira")
-async def api_chat_post_to_jira(rag: JiraRAG = Depends(get_session_rag), chat: ChatService = Depends(get_session_chat), content: str = Form(...)):
+async def api_chat_post_to_jira(rag: JiraRAG = Depends(get_session_rag), chat: ChatService = Depends(get_session_chat), content: str = Form(...), ticket_id: str = Form("")):
     _validate_length(content, MAX_JIRA_COMMENT_LEN, "Comment")
     if not chat.tickets:
         raise HTTPException(status_code=400, detail="No ticket loaded.")
-    ticket_id = list(chat.tickets.keys())[0]
+    tid = ticket_id.strip() if ticket_id else ""
+    if tid and tid not in chat.tickets:
+        raise HTTPException(status_code=400, detail=f"Ticket {tid} is not loaded in the current session.")
+    if not tid:
+        tid = list(chat.tickets.keys())[0]
     comment = f"*AI Analysis:*\n\n{content}\n\n_Posted via QA Assistant_"
-    await run_sync(rag.atlassian.add_comment, ticket_id, comment)
-    return {"ok": True, "ticket_id": ticket_id}
+    await run_sync(rag.atlassian.add_comment, tid, comment)
+    return {"ok": True, "ticket_id": tid}
 
 
 @app.get("/api/export/conversation")
