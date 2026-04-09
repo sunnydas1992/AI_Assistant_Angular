@@ -49,6 +49,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from app.services.aws_bedrock_service import AWSBedrockService
+from app.services.document_processor import extract_text_for_chat_attachment
 from app.services.vector_store_service import VectorStoreService
 
 
@@ -265,9 +266,9 @@ Guidelines:
             else:
                 content_str = content
         else:
-            # Text content
             if isinstance(content, bytes):
-                content_str = content.decode('utf-8', errors='replace')
+                extracted, used = extract_text_for_chat_attachment(name, content, content_type)
+                content_str = extracted if used else content.decode('utf-8', errors='replace')
             else:
                 content_str = str(content)
         

@@ -16,6 +16,62 @@ from app.config.settings import RAGConfig
 logger = logging.getLogger(__name__)
 
 
+def extract_text_for_chat_attachment(name: str, data: bytes, content_type: str = "") -> tuple[str, bool]:
+    """
+    Extract human-readable text for chat context (PDF, DOCX, plain text).
+
+    Returns:
+        (text, used_extractor): If used_extractor is True, text is from a structured
+        extractor (or a placeholder if none). If False, caller should decode bytes as UTF-8.
+    """
+    if not isinstance(data, bytes):
+        return (str(data), True)
+    file_name = (name or "").lower()
+    ct = (content_type or "").lower()
+
+    def _is_pdf() -> bool:
+        return ct == "application/pdf" or file_name.endswith(".pdf")
+
+    def _is_docx() -> bool:
+        return (
+            ct == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            or file_name.endswith(".docx")
+        )
+
+    def _is_plain() -> bool:
+        return ct in ("text/plain", "text/markdown") or file_name.endswith((".txt", ".md"))
+
+    try:
+        if _is_pdf():
+            pdf_reader = pypdf.PdfReader(BytesIO(data))
+            text = "".join(page.extract_text() or "" for page in pdf_reader.pages)
+            if not text.strip():
+                return (
+                    "[PDF: no extractable text (it may be scanned or image-only). "
+                    "Try OCR, export as text, or paste the content.]",
+                    True,
+                )
+            return (text, True)
+        if _is_docx():
+            doc = Document(BytesIO(data))
+            text = "\n".join(p.text for p in doc.paragraphs)
+            if not text.strip():
+                return ("[DOCX: no extractable text.]", True)
+            return (text, True)
+        if file_name.endswith(".doc") and not _is_docx():
+            return (
+                "[Legacy .doc is not supported; save as .docx or PDF and attach again.]",
+                True,
+            )
+        if _is_plain():
+            return (data.decode("utf-8", errors="replace"), True)
+    except Exception as exc:
+        logger.warning("Chat attachment extract failed for '%s': %s", name, exc)
+        return (f"[Could not read file: {exc}]", True)
+
+    return ("", False)
+
+
 class DocumentProcessor:
     """Process uploaded files (expects file-like with .name, .type, .getvalue())."""
 
