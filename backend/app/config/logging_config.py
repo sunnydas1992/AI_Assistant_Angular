@@ -1,10 +1,39 @@
 """
 Logging configuration for QA Assistant backend.
 Configures file and console handlers so events can be inspected for debugging.
+Includes a redaction filter to prevent accidental credential leaks.
 """
 
 import logging
 import os
+import re
+
+
+_SENSITIVE_PATTERNS = re.compile(
+    r"(?i)"
+    r"(api[_-]?token|api[_-]?key|password|secret|authorization|bearer|access[_-]?token)"
+    r"\s*[=:]\s*\S(?:[^\s,;|]*\s?){0,3}\S*",
+)
+
+
+class RedactingFilter(logging.Filter):
+    """Replace sensitive-looking key=value pairs in log messages with redacted placeholders."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _SENSITIVE_PATTERNS.sub(
+                lambda m: m.group(1) + "=***REDACTED***", record.msg
+            )
+        if record.args:
+            new_args = []
+            for a in (record.args if isinstance(record.args, tuple) else (record.args,)):
+                if isinstance(a, str):
+                    a = _SENSITIVE_PATTERNS.sub(
+                        lambda m: m.group(1) + "=***REDACTED***", a
+                    )
+                new_args.append(a)
+            record.args = tuple(new_args)
+        return True
 
 
 def setup_logging(log_dir: str = None, log_level: str = "INFO") -> None:
@@ -23,20 +52,23 @@ def setup_logging(log_dir: str = None, log_level: str = "INFO") -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    redact_filter = RedactingFilter()
+
     root = logging.getLogger()
     root.setLevel(level)
-    # Avoid duplicate handlers when reloading
     for h in list(root.handlers):
         root.removeHandler(h)
 
     fh = logging.FileHandler(log_file, encoding="utf-8")
     fh.setLevel(level)
     fh.setFormatter(formatter)
+    fh.addFilter(redact_filter)
     root.addHandler(fh)
 
     ch = logging.StreamHandler()
     ch.setLevel(level)
     ch.setFormatter(formatter)
+    ch.addFilter(redact_filter)
     root.addHandler(ch)
 
     # Reduce noise from third-party libs

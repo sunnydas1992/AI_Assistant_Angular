@@ -56,9 +56,11 @@ tmp/
 .DS_Store
 Thumbs.db
 
-# App data (optional: uncomment if you don't want to commit Chroma/conversations)
-# backend/data/
-# data/
+# App runtime data — never commit
+data/
+backend/data/
+backend/log/
+backend/logs/
 
 # Test / coverage
 .coverage
@@ -71,3 +73,14 @@ coverage/
 *.pem
 .env
 .env.local
+*.sqlite
+*.sqlite3
+
+# Uploads / temp files
+uploads/
+*.tmp
+
+# Editor / IDE
+*.swp
+*.swo
+*~

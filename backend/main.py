@@ -49,7 +49,8 @@ _conversation_store_by_sid: Dict[str, ConversationStore] = {}
 _data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
 _conversations_dir = os.path.join(_data_dir, "conversations")
 
-SESSION_SECRET = os.environ.get("SESSION_SECRET_KEY", "qa-assistant-dev-secret-change-in-production")
+_DEFAULT_SESSION_SECRET = "qa-assistant-dev-secret-change-in-production"
+SESSION_SECRET = os.environ.get("SESSION_SECRET_KEY", _DEFAULT_SESSION_SECRET)
 
 # Custom thread pool for blocking work (larger than default for ~100 users)
 _THREAD_POOL: Optional[ThreadPoolExecutor] = None
@@ -70,6 +71,23 @@ _rate_limit: Dict[str, Tuple[int, float]] = {}
 _rate_limit_lock = threading.Lock()
 _RATE_LIMIT_REQUESTS = int(os.environ.get("QA_RATE_LIMIT_REQUESTS", "60"))
 _RATE_LIMIT_WINDOW = int(os.environ.get("QA_RATE_LIMIT_WINDOW", "60"))
+
+
+# --- Input size guardrails ---
+MAX_CHAT_MESSAGE_LEN = 10_000       # Characters
+MAX_FEEDBACK_LEN = 5_000
+MAX_JIRA_COMMENT_LEN = 50_000
+MAX_TEST_PLAN_LEN = 200_000
+MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB
+
+
+def _validate_length(value: str, max_len: int, field_name: str = "input") -> None:
+    """Raise HTTP 400 if value exceeds allowed length."""
+    if value and len(value) > max_len:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} is too long ({len(value)} chars). Maximum allowed: {max_len}.",
+        )
 
 
 def _check_heavy_rate_limit(sid: str) -> bool:
@@ -223,6 +241,11 @@ async def lifespan(app: FastAPI):
     max_workers = int(os.environ.get("QA_THREAD_POOL_SIZE", "64"))
     _THREAD_POOL = ThreadPoolExecutor(max_workers=max(4, min(max_workers, 128)), thread_name_prefix="qa_")
     logger.info("Application startup: data_dir=%s thread_pool=%s", _data_dir, max_workers)
+    if SESSION_SECRET == _DEFAULT_SESSION_SECRET:
+        logger.warning(
+            "SESSION_SECRET_KEY is using the default dev value! "
+            "Set SESSION_SECRET_KEY env var to a strong random string in production."
+        )
 
     eviction_interval = int(os.environ.get("QA_SESSION_EVICTION_INTERVAL", "300"))  # 5 min
     eviction_task: Optional[asyncio.Task] = None
@@ -278,9 +301,18 @@ class FileLike:
 # Init body: jira_server, jira_username, jira_api_token, aws_region?, aws_profile?, persist_directory?, chunk_size?, chunk_overlap?, top_k?, bedrock_model?, temperature?, inference_profile_id?
 
 
+_startup_time = time.time()
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    uptime_s = int(time.time() - _startup_time)
+    return {
+        "status": "ok",
+        "uptime_seconds": uptime_s,
+        "active_sessions": len(_rag_by_sid),
+        "session_limit": _SESSION_MAX_COUNT,
+        "thread_pool_alive": _THREAD_POOL is not None,
+    }
 
 
 @app.get("/api/init-status")
@@ -541,6 +573,7 @@ async def api_kb_sources(rag: JiraRAG = Depends(get_session_rag)):
 
 @app.post("/api/chat/message")
 async def api_chat_message(request: Request, chat: ChatService = Depends(get_session_chat), message: str = Form(...)):
+    _validate_length(message, MAX_CHAT_MESSAGE_LEN, "Message")
     if not _check_heavy_rate_limit(get_session_id(request)):
         raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
     try:
@@ -597,6 +630,8 @@ async def api_chat_use_rag(chat: ChatService = Depends(get_session_chat), use_ra
 @app.post("/api/chat/add-attachment")
 async def api_chat_add_attachment(chat: ChatService = Depends(get_session_chat), file: UploadFile = File(...), name: Optional[str] = Form(None)):
     data = await file.read()
+    if len(data) > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail=f"File too large ({len(data)} bytes). Maximum: {MAX_UPLOAD_SIZE_BYTES // (1024*1024)} MB.")
     fname = name or (file.filename or "attachment")
     chat.add_attachment(fname, data, file.content_type or "application/octet-stream")
     return {"ok": True, "name": fname}
@@ -650,6 +685,7 @@ async def api_chat_switch_model(rag: JiraRAG = Depends(get_session_rag), model_i
 
 @app.post("/api/chat/post-to-jira")
 async def api_chat_post_to_jira(rag: JiraRAG = Depends(get_session_rag), chat: ChatService = Depends(get_session_chat), content: str = Form(...)):
+    _validate_length(content, MAX_JIRA_COMMENT_LEN, "Comment")
     if not chat.tickets:
         raise HTTPException(status_code=400, detail="No ticket loaded.")
     ticket_id = list(chat.tickets.keys())[0]
@@ -718,6 +754,7 @@ async def api_test_cases_refine(
     output_format: str = Form(...),
     feedback: str = Form(...),
 ):
+    _validate_length(feedback, MAX_FEEDBACK_LEN, "Feedback")
     def _refine():
         refined = rag.refine_test_cases(current_tests, output_format, feedback)
         parsed = rag.parse_test_cases(refined, output_format)
@@ -814,6 +851,8 @@ async def api_test_plan_generate(
 
 @app.post("/api/test-plan/refine")
 async def api_test_plan_refine(rag: JiraRAG = Depends(get_session_rag), current_plan: str = Form(...), feedback: str = Form(...)):
+    _validate_length(feedback, MAX_FEEDBACK_LEN, "Feedback")
+    _validate_length(current_plan, MAX_TEST_PLAN_LEN, "Current plan")
     try:
         refined = await run_sync(rag.refine_test_plan, current_plan, feedback)
         logger.info("test-plan/refine success")
