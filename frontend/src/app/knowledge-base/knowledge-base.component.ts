@@ -187,8 +187,12 @@ export class KnowledgeBaseComponent implements OnInit {
     this.api.postFormWithFiles('/kb/populate', body, this.selectedFiles).subscribe({
       next: (res: any) => {
         this.loading = false;
-        const chunksAdded: number = res?.chunks_added ?? -1;
-        if (chunksAdded === 0) {
+        const chunksAdded: number | null = res?.chunks_added ?? null;
+        if (chunksAdded === null || chunksAdded < 0) {
+          this.messageOk = false;
+          this.message = 'Knowledge base population completed but the server did not report chunk count. Check server logs.';
+          this.toast.show('Population completed with unknown result. Check server logs.', 'error', 6000);
+        } else if (chunksAdded === 0) {
           this.messageOk = false;
           this.message = 'No content could be extracted from the provided sources. The knowledge base was not updated.';
           this.toast.show('No content was indexed. Files may be empty, scanned images, or unsupported.', 'error', 6000);

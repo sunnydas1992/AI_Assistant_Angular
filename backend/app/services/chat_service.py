@@ -317,15 +317,6 @@ Guidelines:
         Returns:
             AI response text
         """
-        # Prevent duplicate messages (same content sent twice in a row)
-        user_messages = [m for m in self.messages if m.role == "user"]
-        if user_messages and user_messages[-1].content == user_message:
-            # Return the last assistant response if available
-            assistant_messages = [m for m in self.messages if m.role == "assistant"]
-            if assistant_messages:
-                return assistant_messages[-1].content
-            return "Message already sent."
-        
         # Record user message
         user_msg = ChatMessage(
             role="user",

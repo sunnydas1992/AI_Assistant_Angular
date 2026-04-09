@@ -144,7 +144,7 @@ class DocumentProcessor:
     def _extract_plain_text(self, file) -> str:
         data = file.getvalue() if hasattr(file, 'getvalue') else file.read()
         if isinstance(data, bytes):
-            return data.decode("utf-8")
+            return data.decode("utf-8", errors="replace")
         return data
 
     def split_text(self, text: str) -> List[str]:

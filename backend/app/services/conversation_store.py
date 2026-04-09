@@ -3,6 +3,7 @@ Conversation Store - Persist chat conversations to JSON files.
 """
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -11,11 +12,20 @@ class ConversationStore:
     """Save/load conversation history as JSON."""
 
     METADATA_FILE = "_metadata.json"
+    _SAFE_ID_RE = re.compile(r'^[\w\-]+$')
 
     def __init__(self, storage_dir: str = "data/conversations"):
         self.storage_dir = Path(storage_dir)
         self._ensure_storage_dir()
         self._metadata = self._load_metadata()
+
+    @classmethod
+    def _sanitize_id(cls, conversation_id: str) -> str:
+        """Validate conversation_id to prevent path traversal."""
+        cid = conversation_id.strip()
+        if not cid or not cls._SAFE_ID_RE.match(cid):
+            raise ValueError(f"Invalid conversation id: {conversation_id!r}")
+        return cid
 
     def _ensure_storage_dir(self) -> None:
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -41,9 +51,11 @@ class ConversationStore:
         title: Optional[str] = None,
         conversation_id: Optional[str] = None
     ) -> str:
-        conv_id = conversation_id or conversation_data.get(
-            "conversation_id",
-            datetime.now().strftime("%Y%m%d_%H%M%S")
+        conv_id = self._sanitize_id(
+            conversation_id or conversation_data.get(
+                "conversation_id",
+                datetime.now().strftime("%Y%m%d_%H%M%S")
+            )
         )
         file_path = self.storage_dir / f"{conv_id}.json"
         conversation_data["saved_at"] = datetime.now().isoformat()
@@ -68,6 +80,7 @@ class ConversationStore:
         return f"Conversation {conversation_data.get('conversation_id', 'Unknown')}"
 
     def load(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        conversation_id = self._sanitize_id(conversation_id)
         file_path = self.storage_dir / f"{conversation_id}.json"
         if not file_path.exists():
             return None
@@ -78,6 +91,7 @@ class ConversationStore:
             return None
 
     def delete(self, conversation_id: str) -> bool:
+        conversation_id = self._sanitize_id(conversation_id)
         file_path = self.storage_dir / f"{conversation_id}.json"
         if file_path.exists():
             file_path.unlink()

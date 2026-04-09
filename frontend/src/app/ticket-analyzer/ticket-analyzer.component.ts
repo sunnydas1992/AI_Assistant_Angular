@@ -837,7 +837,12 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
     this.genTcSelectedTicket = '';
   }
 
-  ngOnDestroy(): void {}
+  ngOnDestroy(): void {
+    if (this.copiedTimer) {
+      clearTimeout(this.copiedTimer);
+      this.copiedTimer = null;
+    }
+  }
 
   /** Load model list and set default to the model from Configuration (same session). Prefer init-status current_model_id so Ticket Analyzer always matches Config. */
   loadModelsWithConfigDefault(): void {
@@ -890,7 +895,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
             this.selectedModelId = this.pickModelIdFromList(this.modelOptions, defaultId || fromApi);
           }
         },
-        error: () => {},
+        error: () => { this.toast.error('Failed to load model list.'); },
       });
     };
     this.api.get<{ initialized?: boolean; current_model_id?: string | null }>('/init-status').subscribe({

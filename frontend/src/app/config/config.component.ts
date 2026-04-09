@@ -513,6 +513,7 @@ export class ConfigComponent implements OnInit {
             this.message = 'Connected. Select a model in Advanced Settings to continue.';
             this.toast.success('Connected. Now select a model to complete setup.');
           } else {
+            this.messageOk = false;
             this.message = 'Connected, but the selected model could not be initialized. Choose a different model in Advanced Settings.';
           }
           this.loadModels();

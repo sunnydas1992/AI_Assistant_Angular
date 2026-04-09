@@ -264,6 +264,9 @@ class AWSBedrockService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> bool:
+        old_model = self.bedrock_model
+        old_temp = self.temperature
+        old_max = self.max_tokens
         if bedrock_model is not None:
             self.bedrock_model = bedrock_model
         if temperature is not None:
@@ -271,7 +274,20 @@ class AWSBedrockService:
         if max_tokens is not None:
             self.max_tokens = max_tokens
         try:
-            self._llm = self._create_llm()
-            return self._llm is not None
-        except Exception:
+            new_llm = self._create_llm()
+            if new_llm is None:
+                raise RuntimeError("LLM creation returned None")
+            self._llm = new_llm
+            if not self._test_connection_on_init():
+                raise RuntimeError("Connection test failed for new model")
+            return True
+        except Exception as e:
+            logger.warning("update_model_config failed, rolling back: %s", e)
+            self.bedrock_model = old_model
+            self.temperature = old_temp
+            self.max_tokens = old_max
+            try:
+                self._llm = self._create_llm()
+            except Exception:
+                self._llm = None
             return False

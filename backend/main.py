@@ -245,6 +245,7 @@ def _evict_idle_sessions() -> None:
         _chat_by_sid.pop(sid, None)
         _conversation_store_by_sid.pop(sid, None)
         _session_last_used.pop(sid, None)
+        _rate_limit.pop(sid, None)
     if to_evict:
         logger.info("Evicted %s idle/over-capacity session(s)", len(to_evict))
 
@@ -559,6 +560,9 @@ async def api_bedrock_models(request: Request, aws_region: str = None, aws_profi
     try:
         models = await run_sync(fetch_bedrock_models_for_ui, region, profile or None)
         out = {"models": models, "ok": True}
+        if len(_BEDROCK_MODELS_CACHE) >= 64:
+            oldest_key = min(_BEDROCK_MODELS_CACHE, key=lambda k: _BEDROCK_MODELS_CACHE[k][0])
+            _BEDROCK_MODELS_CACHE.pop(oldest_key, None)
         _BEDROCK_MODELS_CACHE[cache_key] = (now + _BEDROCK_MODELS_CACHE_TTL, out.copy())
         if use_session_config and rag is not None:
             current = getattr(rag.aws_service, "bedrock_model", None)
@@ -630,11 +634,14 @@ async def api_chat_message(request: Request, chat: ChatService = Depends(get_ses
 
 
 @app.post("/api/chat/quick-action")
-async def api_chat_quick_action(chat: ChatService = Depends(get_session_chat), action: str = Form(...)):
+async def api_chat_quick_action(request: Request, chat: ChatService = Depends(get_session_chat), action: str = Form(...)):
     if action not in chat.QUICK_ACTIONS:
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+    if not _check_heavy_rate_limit(get_session_id(request)):
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
     try:
-        response = await run_sync(chat.send_quick_action, action)
+        async with _get_heavy_semaphore():
+            response = await run_sync(chat.send_quick_action, action)
         return {"response": response, "ok": True}
     except Exception as e:
         logger.exception("chat/quick-action failed action=%s error=%s", action, e)
@@ -865,6 +872,7 @@ async def api_test_cases_quality_review(
 
 @app.post("/api/test-plan/generate")
 async def api_test_plan_generate(
+    request: Request,
     rag: JiraRAG = Depends(get_session_rag),
     initiative_urls: str = Form(""),
     design_urls: str = Form(""),
@@ -874,6 +882,8 @@ async def api_test_plan_generate(
     sample_template_url: str = Form(""),
     files: List[UploadFile] = File(default=[]),
 ):
+    if not _check_heavy_rate_limit(get_session_id(request)):
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
     init_list = [u.strip() for u in initiative_urls.split(",") if u.strip()]
     design_list = [u.strip() for u in design_urls.split(",") if u.strip()]
     other_list = [u.strip() for u in other_urls.split(",") if u.strip()]
@@ -883,13 +893,14 @@ async def api_test_plan_generate(
         data = await f.read()
         uploaded.append(FileLike(f.filename or "file", f.content_type or "application/octet-stream", data))
     try:
-        plan = await run_sync(
-            rag.generate_test_plan,
-            init_list, design_list, other_list,
-            ticket_list, uploaded,
-            sample_template_url.strip() or None,
-            plan_prompt.strip() or None,
-        )
+        async with _get_heavy_semaphore():
+            plan = await run_sync(
+                rag.generate_test_plan,
+                init_list, design_list, other_list,
+                ticket_list, uploaded,
+                sample_template_url.strip() or None,
+                plan_prompt.strip() or None,
+            )
         logger.info("test-plan/generate success")
         return {"plan": plan, "ok": True}
     except Exception as e:
@@ -898,11 +909,14 @@ async def api_test_plan_generate(
 
 
 @app.post("/api/test-plan/refine")
-async def api_test_plan_refine(rag: JiraRAG = Depends(get_session_rag), current_plan: str = Form(...), feedback: str = Form(...)):
+async def api_test_plan_refine(request: Request, rag: JiraRAG = Depends(get_session_rag), current_plan: str = Form(...), feedback: str = Form(...)):
     _validate_length(feedback, MAX_FEEDBACK_LEN, "Feedback")
     _validate_length(current_plan, MAX_TEST_PLAN_LEN, "Current plan")
+    if not _check_heavy_rate_limit(get_session_id(request)):
+        raise HTTPException(status_code=429, detail="Too many requests. Try again later.")
     try:
-        refined = await run_sync(rag.refine_test_plan, current_plan, feedback)
+        async with _get_heavy_semaphore():
+            refined = await run_sync(rag.refine_test_plan, current_plan, feedback)
         logger.info("test-plan/refine success")
         return {"plan": refined, "ok": True}
     except Exception as e:

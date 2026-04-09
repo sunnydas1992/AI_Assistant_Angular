@@ -756,18 +756,15 @@ class AtlassianService:
 
     def publish_to_confluence(self, space_key: str, title: str, markdown_body: str) -> str:
         if not self.confluence_client:
-            return "Confluence client not initialized."
-        try:
-            html_body = md.markdown(markdown_body, extensions=['extra'])
-            page = self.confluence_client.create_page(
-                space=space_key,
-                title=title,
-                body=html_body,
-                representation='storage'
-            )
-            return self._build_confluence_url(page)
-        except Exception as e:
-            return f"Failed to publish: {e}"
+            raise RuntimeError("Confluence client not initialized.")
+        html_body = md.markdown(markdown_body, extensions=['extra'])
+        page = self.confluence_client.create_page(
+            space=space_key,
+            title=title,
+            body=html_body,
+            representation='storage'
+        )
+        return self._build_confluence_url(page)
 
     def _build_confluence_url(self, page: Dict) -> str:
         if not isinstance(page, dict):
@@ -797,4 +794,9 @@ class AtlassianService:
 
     @staticmethod
     def extract_ticket_id_from_url(url: str) -> str:
-        return url.split('/')[-1]
+        stripped = url.strip().rstrip('/')
+        if not stripped:
+            return ""
+        segment = stripped.split('/')[-1]
+        match = re.match(r'^[A-Z][A-Z0-9_]+-\d+', segment)
+        return match.group(0) if match else segment

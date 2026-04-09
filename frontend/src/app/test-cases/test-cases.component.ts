@@ -1709,7 +1709,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
         a.click();
         URL.revokeObjectURL(url);
       },
-      error: () => {},
+      error: () => { this.toast.error('Excel export failed. Please try again.'); },
     });
   }
 
@@ -1749,8 +1749,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
         const r = res as { parsed?: { id: string; title: string; content: string; confidence?: number }[] };
         const parsed = r?.parsed ?? [];
         this.items = parsed.map((p, i) => {
-          const oldId = this.items[i]?.id;
-          const prev = snapshots.get(oldId ?? '') ?? snapshots.get(p.id) ?? undefined;
+          const prev = snapshots.get(p.id) ?? snapshots.get(this.items[i]?.id ?? '') ?? undefined;
           return {
             id: p.id || `tc_${i + 1}`,
             title: p.title,
