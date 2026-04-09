@@ -185,15 +185,23 @@ export class KnowledgeBaseComponent implements OnInit {
       confluence_urls: this.confluenceUrls,
     };
     this.api.postFormWithFiles('/kb/populate', body, this.selectedFiles).subscribe({
-      next: () => {
+      next: (res: any) => {
         this.loading = false;
-        this.messageOk = true;
-        this.message = 'Knowledge base populated.';
-        this.toast.success('Knowledge base populated successfully.');
+        const chunksAdded: number = res?.chunks_added ?? -1;
+        if (chunksAdded === 0) {
+          this.messageOk = false;
+          this.message = 'No content could be extracted from the provided sources. The knowledge base was not updated.';
+          this.toast.show('No content was indexed. Files may be empty, scanned images, or unsupported.', 'error', 6000);
+        } else {
+          this.messageOk = true;
+          this.message = `Knowledge base populated (${chunksAdded} chunks added).`;
+          this.toast.success('Knowledge base populated successfully.');
+        }
         this.loadKbCount();
       },
       error: (err) => {
         this.loading = false;
+        this.messageOk = false;
         this.toast.error(err?.error?.detail || 'Failed to populate.');
         this.message = err?.error?.detail || 'Failed.';
       },

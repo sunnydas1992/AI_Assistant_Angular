@@ -49,14 +49,20 @@ class VectorStoreService:
             documents, metadatas, ids = self._filter_existing(documents, metadatas, ids)
         if not documents:
             return 0
+        sanitized = [self._sanitize_metadata(m) for m in metadatas]
         embeddings = self.embedding_function.embed_documents(documents)
         self.collection.add(
             embeddings=embeddings,
             documents=documents,
-            metadatas=metadatas,
+            metadatas=sanitized,
             ids=ids
         )
         return len(documents)
+
+    @staticmethod
+    def _sanitize_metadata(meta: Dict[str, Any]) -> Dict[str, Any]:
+        """ChromaDB rejects None values; convert them to empty strings."""
+        return {k: ("" if v is None else v) for k, v in meta.items()}
 
     def _filter_existing(
         self,

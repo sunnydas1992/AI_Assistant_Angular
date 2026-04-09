@@ -235,7 +235,7 @@ class JiraRAG:
         example_ticket_ids: List[str],
         confluence_page_urls: List[str],
         uploaded_files
-    ) -> None:
+    ) -> int:
         """
         Populate the vector database from multiple sources.
         
@@ -248,6 +248,9 @@ class JiraRAG:
             example_ticket_ids: List of Jira ticket IDs or URLs
             confluence_page_urls: List of Confluence page URLs
             uploaded_files: Streamlit uploaded file objects
+
+        Returns:
+            Number of chunks added to the vector store (0 when nothing was indexed).
         """
         source_docs = []
         
@@ -271,14 +274,16 @@ class JiraRAG:
                     if content:
                         source_docs.append(content)
                 else:
-                    pass  # Could not extract page ID from URL
+                    logger.warning("Could not extract page ID from URL: %s", url)
         
         if not source_docs:
-            return
+            logger.info("populate_vector_db: no documents to index")
+            return 0
         
         # Prepare chunks and add to vector store
         chunks, metas, ids = self.doc_processor.prepare_chunks_for_storage(source_docs)
         self.vector_store.add_documents(chunks, metas, ids)
+        return len(chunks)
     
     def clear_kb(self) -> None:
         """Clear the entire knowledge base."""

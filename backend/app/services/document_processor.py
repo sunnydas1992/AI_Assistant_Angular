@@ -3,6 +3,7 @@ Document Processor - Extract text from PDF, DOCX, TXT, MD. File-like: .name, .ty
 """
 
 import hashlib
+import logging
 from io import BytesIO
 from typing import List, Dict, Any, Optional
 
@@ -11,6 +12,8 @@ from docx import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.config.settings import RAGConfig
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentProcessor:
@@ -45,24 +48,30 @@ class DocumentProcessor:
         try:
             text = self._extract_text(file)
             if text is None:
+                logger.warning("Unsupported or unrecognised file type for '%s', skipping", source_title)
+                return None
+            if not text.strip():
+                logger.warning("No extractable text in '%s' (scanned / image-only PDF?), skipping", source_title)
                 return None
             content = f"Source: Uploaded File '{source_title}'\n\n{text}"
             return {
                 "text": content,
-                "meta": {"source_type": "upload", "title": source_title, "url": None}
+                "meta": {"source_type": "upload", "title": source_title, "url": ""}
             }
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to process file '%s': %s", source_title, exc)
             return None
 
     def _extract_text(self, file) -> Optional[str]:
         file_type = getattr(file, 'type', None) or getattr(file, 'content_type', '')
         file_name = (getattr(file, 'name', '') or getattr(file, 'filename', '')).lower()
-        if file_type == "application/pdf":
+        if file_type == "application/pdf" or file_name.endswith(".pdf"):
             return self._extract_pdf_text(file)
         if (file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 or file_name.endswith(".docx")):
             return self._extract_docx_text(file)
-        if file_type in ["text/plain", "text/markdown"]:
+        if (file_type in ("text/plain", "text/markdown")
+                or file_name.endswith((".txt", ".md"))):
             return self._extract_plain_text(file)
         return None
 

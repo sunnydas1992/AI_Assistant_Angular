@@ -591,9 +591,12 @@ async def api_kb_populate(
         uploaded.append(FileLike(f.filename or "file", f.content_type or "application/octet-stream", data))
     try:
         async with _get_heavy_semaphore():
-            await run_sync(rag.populate_vector_db, ticket_list, confluence_list, uploaded)
-        logger.info("kb/populate success tickets=%s confluence_urls=%s files=%s", len(ticket_list), len(confluence_list), len(uploaded))
-        return {"ok": True, "message": "Knowledge base populated"}
+            chunks_added = await run_sync(rag.populate_vector_db, ticket_list, confluence_list, uploaded)
+        logger.info(
+            "kb/populate success tickets=%s confluence_urls=%s files=%s chunks_added=%s",
+            len(ticket_list), len(confluence_list), len(uploaded), chunks_added,
+        )
+        return {"ok": True, "message": "Knowledge base populated", "chunks_added": chunks_added}
     except Exception as e:
         logger.exception("kb/populate failed error=%s", e)
         raise HTTPException(status_code=500, detail=str(e))
