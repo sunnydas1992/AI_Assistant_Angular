@@ -314,25 +314,25 @@ interface TicketInfo {
               @if (ticketDetailData.description) {
                 <div class="td-section">
                   <h4 class="td-section-title">Description</h4>
-                  <pre class="td-section-body">{{ ticketDetailData.description }}</pre>
+                  <div class="td-section-body td-rendered" [innerHTML]="trustHtml(ticketDetailData.description)"></div>
                 </div>
               }
               @if (ticketDetailData.acceptance_criteria) {
                 <div class="td-section">
                   <h4 class="td-section-title">Acceptance Criteria</h4>
-                  <pre class="td-section-body">{{ ticketDetailData.acceptance_criteria }}</pre>
+                  <div class="td-section-body td-rendered" [innerHTML]="trustHtml(ticketDetailData.acceptance_criteria)"></div>
                 </div>
               }
               @if (ticketDetailData.steps_to_reproduce) {
                 <div class="td-section">
                   <h4 class="td-section-title">Steps to Reproduce</h4>
-                  <pre class="td-section-body">{{ ticketDetailData.steps_to_reproduce }}</pre>
+                  <div class="td-section-body td-rendered" [innerHTML]="trustHtml(ticketDetailData.steps_to_reproduce)"></div>
                 </div>
               }
               @if (ticketDetailData.environment) {
                 <div class="td-section">
                   <h4 class="td-section-title">Environment</h4>
-                  <pre class="td-section-body">{{ ticketDetailData.environment }}</pre>
+                  <div class="td-section-body td-rendered" [innerHTML]="trustHtml(ticketDetailData.environment)"></div>
                 </div>
               }
               @if (ticketDetailData.linked_issues?.length) {
@@ -377,17 +377,19 @@ interface TicketInfo {
                     @for (c of ticketDetailData.comments; track c.date + c.author) {
                       <div class="td-comment">
                         <span class="td-comment-meta">{{ c.author }} · {{ c.date }}</span>
-                        <pre class="td-comment-body">{{ c.body }}</pre>
+                        <div class="td-comment-body td-rendered" [innerHTML]="trustHtml(c.body)"></div>
                       </div>
                     }
                   }
                 </div>
               }
             </div>
-            <div class="overlay-footer">
-              @if (jiraServerUrl && ticketDetailData.ticket_id) {
-                <a [href]="jiraServerUrl + '/browse/' + ticketDetailData.ticket_id" target="_blank" rel="noopener" class="primary">Open in Jira</a>
-              }
+            <div class="overlay-footer overlay-footer--spaced">
+              <div>
+                @if (jiraServerUrl && ticketDetailData.ticket_id) {
+                  <a [href]="jiraServerUrl + '/browse/' + ticketDetailData.ticket_id" target="_blank" rel="noopener" class="primary">Open in Jira</a>
+                }
+              </div>
               <button class="secondary" (click)="closeTicketDetails()">Close</button>
             </div>
           }
@@ -646,7 +648,9 @@ interface TicketInfo {
     .overlay-footer {
       display: flex; justify-content: flex-end; gap: var(--space-sm);
       padding: 0.75rem 1.25rem; border-top: 1px solid var(--app-card-border); flex-shrink: 0;
+      align-items: center;
     }
+    .overlay-footer--spaced { justify-content: space-between; }
     .post-jira-target { margin-bottom: 0.75rem; }
     .target-ticket-select {
       width: 100%; margin-top: 0.25rem; font-size: 0.88rem; padding: 0.4rem 0.5rem;
@@ -713,7 +717,38 @@ interface TicketInfo {
     .td-list { margin: 0.25rem 0 0 1.2rem; font-size: 0.85rem; line-height: 1.6; }
     .td-comment { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: var(--app-surface-muted); border-radius: var(--radius-sm); border: 1px solid var(--app-card-border); }
     .td-comment-meta { font-size: 0.76rem; font-weight: 600; color: var(--app-text-muted); }
-    .td-comment-body { white-space: pre-wrap; word-break: break-word; font-size: 0.83rem; line-height: 1.5; margin: 0.25rem 0 0; font-family: inherit; }
+    .td-comment-body { word-break: break-word; font-size: 0.83rem; line-height: 1.5; margin: 0.25rem 0 0; font-family: inherit; }
+    .td-rendered { white-space: normal; }
+    .td-rendered ::ng-deep p { margin: 0.3rem 0; }
+    .td-rendered ::ng-deep ul, .td-rendered ::ng-deep ol { margin: 0.3rem 0 0.3rem 1.2rem; padding: 0; }
+    .td-rendered ::ng-deep li { margin: 0.15rem 0; }
+    .td-rendered ::ng-deep a { color: var(--hyland-blue); text-decoration: underline; }
+    .td-rendered ::ng-deep a:hover { opacity: 0.85; }
+    .td-rendered ::ng-deep blockquote {
+      border-left: 3px solid var(--app-card-border); margin: 0.4rem 0; padding: 0.3rem 0.75rem;
+      color: var(--app-text-muted); font-style: italic;
+    }
+    .td-rendered ::ng-deep pre {
+      background: rgba(0,0,0,0.15); border-radius: 4px; padding: 0.5rem 0.75rem;
+      font-size: 0.82rem; overflow-x: auto; white-space: pre-wrap; margin: 0.4rem 0;
+    }
+    .td-rendered ::ng-deep code { font-size: 0.82rem; }
+    .td-rendered ::ng-deep h1, .td-rendered ::ng-deep h2, .td-rendered ::ng-deep h3,
+    .td-rendered ::ng-deep h4, .td-rendered ::ng-deep h5, .td-rendered ::ng-deep h6 {
+      margin: 0.5rem 0 0.25rem; font-weight: 700;
+    }
+    .td-rendered ::ng-deep strong { font-weight: 700; }
+    .td-rendered ::ng-deep em { font-style: italic; }
+    .td-rendered ::ng-deep u { text-decoration: underline; }
+    .td-rendered ::ng-deep del { text-decoration: line-through; opacity: 0.7; }
+    .td-rendered ::ng-deep table {
+      border-collapse: collapse; margin: 0.4rem 0; font-size: 0.83rem; width: 100%;
+    }
+    .td-rendered ::ng-deep th, .td-rendered ::ng-deep td {
+      border: 1px solid var(--app-card-border); padding: 0.3rem 0.5rem; text-align: left;
+    }
+    .td-rendered ::ng-deep th { font-weight: 700; background: rgba(0,0,0,0.06); }
+    .td-rendered ::ng-deep img { max-width: 100%; height: auto; border-radius: 4px; }
 
     /* ── Responsive ── */
     @media (max-width: 700px) {
@@ -939,10 +974,20 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
     const ids = raw.split(',').map(s => s.trim().split('/').pop() || s.trim()).filter(Boolean);
     this.loadingTicket = true;
     let done = 0;
+    const failed: string[] = [];
     ids.forEach(id => {
       this.api.postForm('/chat/add-ticket', { ticket_id: id }).subscribe({
-        next: () => { done++; if (done === ids.length) { this.loadingTicket = false; this.loadState(); } this.ticketIdToAdd = ''; },
-        error: () => { done++; if (done === ids.length) this.loadingTicket = false; },
+        next: () => {
+          done++;
+          this.ticketIdToAdd = '';
+          if (done === ids.length) { this.loadingTicket = false; this.loadState(); if (failed.length) this.toast.error(`Could not load ticket${failed.length > 1 ? 's' : ''}: ${failed.join(', ')}`); }
+        },
+        error: (err: any) => {
+          done++;
+          const detail = err?.error?.detail || `Ticket ${id} not found or could not be loaded.`;
+          failed.push(id);
+          if (done === ids.length) { this.loadingTicket = false; this.loadState(); this.toast.error(failed.length > 1 ? `Could not load tickets: ${failed.join(', ')}` : detail); }
+        },
       });
     });
     if (ids.length === 0) this.loadingTicket = false;
@@ -1007,6 +1052,10 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
         return;
       }
     }
+  }
+
+  trustHtml(html: string): SafeHtml {
+    return this.sanitizer.bypassSecurityTrustHtml(html || '');
   }
 
   /** Render assistant message as markdown (headings, bold, lists, code) for display. */

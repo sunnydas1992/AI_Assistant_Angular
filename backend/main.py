@@ -734,6 +734,20 @@ async def api_chat_switch_model(rag: JiraRAG = Depends(get_session_rag), model_i
     return {"ok": ok}
 
 
+def _markdown_to_jira_wiki(text: str) -> str:
+    """Convert common Markdown syntax to Jira wiki notation."""
+    import re as _re
+    t = text
+    t = _re.sub(r'^###\s+(.+)$', r'h3. \1', t, flags=_re.MULTILINE)
+    t = _re.sub(r'^##\s+(.+)$', r'h2. \1', t, flags=_re.MULTILINE)
+    t = _re.sub(r'^#\s+(.+)$', r'h1. \1', t, flags=_re.MULTILINE)
+    t = _re.sub(r'\*\*(.+?)\*\*', r'*\1*', t)
+    t = _re.sub(r'`([^`]+)`', r'{{\1}}', t)
+    t = _re.sub(r'^- ', r'* ', t, flags=_re.MULTILINE)
+    t = _re.sub(r'^\d+\.\s+', r'# ', t, flags=_re.MULTILINE)
+    return t
+
+
 @app.post("/api/chat/post-to-jira")
 async def api_chat_post_to_jira(rag: JiraRAG = Depends(get_session_rag), chat: ChatService = Depends(get_session_chat), content: str = Form(...), ticket_id: str = Form("")):
     _validate_length(content, MAX_JIRA_COMMENT_LEN, "Comment")
@@ -744,7 +758,8 @@ async def api_chat_post_to_jira(rag: JiraRAG = Depends(get_session_rag), chat: C
         raise HTTPException(status_code=400, detail=f"Ticket {tid} is not loaded in the current session.")
     if not tid:
         tid = list(chat.tickets.keys())[0]
-    comment = f"*AI Analysis:*\n\n{content}\n\n_Posted via QA Assistant_"
+    wiki_content = _markdown_to_jira_wiki(content)
+    comment = f"*AI Analysis:*\n\n{wiki_content}\n\n_Posted via QA Assistant_"
     await run_sync(rag.atlassian.add_comment, tid, comment)
     return {"ok": True, "ticket_id": tid}
 

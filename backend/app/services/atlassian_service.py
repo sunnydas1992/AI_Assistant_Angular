@@ -83,13 +83,80 @@ class AtlassianService:
         except Exception:
             return None
 
+    @staticmethod
+    def _jira_wiki_to_html(text: str) -> str:
+        """Convert Jira wiki markup to basic HTML for display."""
+        if not text:
+            return ""
+        import html as html_mod
+        t = html_mod.escape(text)
+
+        t = re.sub(r'\{color(?::[^}]*)?\}', '', t)
+        t = re.sub(r'\{quote\}', '<blockquote>', t, count=1)
+        t = re.sub(r'\{quote\}', '</blockquote>', t, count=1)
+        t = re.sub(r'\{quote\}', '', t)
+        t = re.sub(r'\{noformat\}([\s\S]*?)\{noformat\}', r'<pre>\1</pre>', t)
+        t = re.sub(r'\{code(?::[^}]*)?\}([\s\S]*?)\{code\}', r'<pre><code>\1</code></pre>', t)
+
+        t = re.sub(r'(?<!\w)\*([^*\n]+?)\*(?!\w)', r'<strong>\1</strong>', t)
+        t = re.sub(r'(?<!\w)_([^_\n]+?)_(?!\w)', r'<em>\1</em>', t)
+        t = re.sub(r'(?<!\w)\+([^+\n]+?)\+(?!\w)', r'<u>\1</u>', t)
+        t = re.sub(r'(?<!\w)-([^-\n]+?)-(?!\w)', r'<del>\1</del>', t)
+
+        t = re.sub(r'\[([^|\]\n]+)\|([^\]\n]+)\]', r'<a href="\2" target="_blank" rel="noopener">\1</a>', t)
+        t = re.sub(r'\[([^\]\n]+)\]', r'<a href="\1" target="_blank" rel="noopener">\1</a>', t)
+
+        t = re.sub(r'^h([1-6])\.\s+(.+)$', r'<h\1>\2</h\1>', t, flags=re.MULTILINE)
+
+        lines = t.split('\n')
+        result: List[str] = []
+        in_list = False
+        for line in lines:
+            bullet = re.match(r'^([*#])\s+(.*)', line)
+            if bullet:
+                if not in_list:
+                    tag = 'ul' if bullet.group(1) == '*' else 'ol'
+                    result.append(f'<{tag}>')
+                    in_list = tag
+                result.append(f'<li>{bullet.group(2)}</li>')
+            else:
+                if in_list:
+                    result.append(f'</{in_list}>')
+                    in_list = False
+                result.append(line)
+        if in_list:
+            result.append(f'</{in_list}>')
+        t = '\n'.join(result)
+
+        t = re.sub(r'\n{2,}', '</p><p>', t)
+        t = t.replace('\n', '<br>')
+        t = f'<p>{t}</p>'
+        t = t.replace('<p></p>', '')
+        return t
+
     def get_jira_ticket_structured(self, ticket_id: str) -> Optional[Dict[str, Any]]:
-        """Return structured Jira fields as a dict (for UI display, not RAG ingestion)."""
+        """Return structured Jira fields as a dict (for UI display, not RAG ingestion).
+
+        Attempts to use Jira's renderedFields (pre-rendered HTML) first; falls
+        back to converting raw wiki markup via ``_jira_wiki_to_html``.
+        """
         if not self.jira_client:
             return None
         try:
-            issue = self.jira_client.issue(ticket_id)
+            issue = self.jira_client.issue(ticket_id, expand='renderedFields')
             f = issue.fields
+            rf = getattr(issue, 'renderedFields', None)
+
+            def _rendered(field_name: str, raw_value: str) -> str:
+                """Return rendered HTML if available, else convert wiki markup."""
+                rendered = getattr(rf, field_name, None) if rf else None
+                if rendered and rendered.strip():
+                    return rendered
+                return self._jira_wiki_to_html(raw_value) if raw_value else ""
+
+            raw_desc = f.description or ""
+            raw_env = (f.environment or "") if hasattr(f, "environment") else ""
+
             result: Dict[str, Any] = {
                 "ticket_id": ticket_id,
                 "summary": f.summary or "",
@@ -100,18 +167,20 @@ class AtlassianService:
                 "components": [c.name for c in f.components] if hasattr(f, "components") and f.components else [],
                 "assignee": f.assignee.displayName if hasattr(f, "assignee") and f.assignee else "",
                 "reporter": f.reporter.displayName if hasattr(f, "reporter") and f.reporter else "",
-                "description": f.description or "",
+                "description": _rendered("description", raw_desc),
                 "acceptance_criteria": "",
                 "steps_to_reproduce": "",
-                "environment": f.environment or "" if hasattr(f, "environment") else "",
+                "environment": _rendered("environment", raw_env),
                 "url": f"/browse/{ticket_id}",
             }
             ac_field = self.config.acceptance_criteria_field
             if hasattr(f, ac_field) and getattr(f, ac_field):
-                result["acceptance_criteria"] = getattr(f, ac_field)
+                raw_ac = getattr(f, ac_field)
+                result["acceptance_criteria"] = _rendered(ac_field, raw_ac)
             steps_field = self.config.steps_to_reproduce_field
             if hasattr(f, steps_field) and getattr(f, steps_field):
-                result["steps_to_reproduce"] = getattr(f, steps_field)
+                raw_steps = getattr(f, steps_field)
+                result["steps_to_reproduce"] = _rendered(steps_field, raw_steps)
 
             linked = []
             if hasattr(f, "issuelinks") and f.issuelinks:
@@ -140,10 +209,19 @@ class AtlassianService:
 
             comments = []
             if hasattr(f, "comment") and f.comment and f.comment.comments:
+                rendered_comments = getattr(rf, 'comment', None) if rf else None
+                rendered_map: Dict[str, str] = {}
+                if rendered_comments and hasattr(rendered_comments, 'comments'):
+                    for rc in rendered_comments.comments:
+                        rendered_map[getattr(rc, 'id', '')] = getattr(rc, 'body', '')
                 for c in f.comment.comments:
                     author = getattr(c.author, "displayName", "Unknown")
                     created = c.created[:10] if hasattr(c, "created") else ""
-                    comments.append({"author": author, "date": created, "body": c.body.strip()})
+                    cid = getattr(c, 'id', '')
+                    body_html = rendered_map.get(cid, '')
+                    if not body_html.strip():
+                        body_html = self._jira_wiki_to_html(c.body.strip())
+                    comments.append({"author": author, "date": created, "body": body_html})
             result["comments"] = comments
 
             return result
