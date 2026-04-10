@@ -60,7 +60,7 @@ interface TicketInfo {
             <option [value]="opt.value">{{ opt.label }}</option>
           }
         </select>
-        <button type="button" class="icon-btn-sm" (click)="loadModels()" [disabled]="switchingModel" title="Refresh model list">
+        <button type="button" class="icon-btn-sm" (click)="loadModels(true)" [disabled]="switchingModel" title="Refresh model list">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
         </button>
       </div>
@@ -922,7 +922,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
     return options[0].value;
   }
 
-  loadModels(): void {
+  loadModels(showToast = false): void {
     const applyModels = (defaultId: string) => {
       this.api.get<{ models: Record<string, string>; default_model_id?: string | null }>('/bedrock-models').subscribe({
         next: (res) => {
@@ -932,6 +932,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
           if (this.modelOptions.length) {
             this.selectedModelId = this.pickModelIdFromList(this.modelOptions, defaultId || fromApi);
           }
+          if (showToast) this.toast.success(`Model list updated — ${this.modelOptions.length} model${this.modelOptions.length !== 1 ? 's' : ''} available.`);
         },
         error: () => { this.toast.error('Failed to load model list.'); },
       });

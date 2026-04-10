@@ -79,7 +79,7 @@ export interface TestCaseItem {
           @if (switchingModel) {
             <span class="switching-hint">Switching…</span>
           }
-          <button type="button" class="link-btn refresh-models-btn" (click)="loadModels()" [disabled]="switchingModel">Refresh</button>
+          <button type="button" class="link-btn refresh-models-btn" (click)="loadModels(true)" [disabled]="switchingModel">Refresh</button>
         </div>
       } @else if (currentModelDisplay) {
         <div class="current-model-strip" [attr.title]="currentModelId || null">
@@ -1109,7 +1109,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     return options[0].value;
   }
 
-  loadModels(): void {
+  loadModels(showToast = false): void {
     this.api.get<{ initialized?: boolean; current_model_id?: string | null }>('/init-status').subscribe({
       next: (res) => {
         const inUse = (res?.current_model_id ?? '').toString().trim();
@@ -1123,11 +1123,12 @@ export class TestCasesComponent implements OnInit, OnDestroy {
               this.currentModelDisplay = opt?.label ?? this.selectedModelId;
               this.currentModelId = this.selectedModelId;
             }
+            if (showToast) this.toast.success(`Model list updated — ${this.modelOptions.length} model${this.modelOptions.length !== 1 ? 's' : ''} available.`);
           },
-          error: () => {},
+          error: () => { if (showToast) this.toast.error('Failed to refresh model list.'); },
         });
       },
-      error: () => {},
+      error: () => { if (showToast) this.toast.error('Failed to refresh model list.'); },
     });
   }
 

@@ -131,7 +131,7 @@ import { ToastService } from '../toast.service';
             </select>
             @if (modelsLoading) { <span class="hint">Loading models…</span> }
             @if (loading && reinitMessage) { <span class="hint reinit-wait">{{ reinitMessage }}</span> }
-            <button type="button" class="link-btn" (click)="loadModels()" [disabled]="!ctx.unlocked">Refresh Models</button>
+            <button type="button" class="link-btn" (click)="loadModels(true)" [disabled]="!ctx.unlocked">Refresh Models</button>
           </div>
           <div class="form-group">
             <label>Temperature</label>
@@ -426,10 +426,16 @@ export class ConfigComponent implements OnInit {
   }
 
   /** Load Bedrock models immediately (page load, init success, Refresh models). */
-  loadModels(): void {
+  loadModels(showToast = false): void {
     this.fetchBedrockModels$().subscribe({
-      next: (res) => this.applyBedrockModelsResponse(res),
-      error: (err) => this.applyBedrockModelsError(err),
+      next: (res) => {
+        this.applyBedrockModelsResponse(res);
+        if (showToast) this.toast.success(`Model list updated — ${this.modelOptions.length} model${this.modelOptions.length !== 1 ? 's' : ''} available.`);
+      },
+      error: (err) => {
+        this.applyBedrockModelsError(err);
+        if (showToast) this.toast.error('Failed to refresh model list.');
+      },
     });
   }
 
