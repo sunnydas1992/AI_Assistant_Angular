@@ -38,19 +38,30 @@ Example Usage:
 """
 
 import base64
+import hashlib
 import json
+import logging
 import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Dict, Any, Optional, Literal, Set
 from pathlib import Path
 
+import chromadb
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.services.aws_bedrock_service import AWSBedrockService
 from app.services.document_processor import extract_text_for_chat_attachment
 from app.services.vector_store_service import VectorStoreService
+
+logger = logging.getLogger(__name__)
+
+LARGE_ATTACHMENT_THRESHOLD = 30_000
+ATTACHMENT_CHUNK_SIZE = 1500
+ATTACHMENT_CHUNK_OVERLAP = 200
+ATTACHMENT_RETRIEVAL_K = 8
 
 
 @dataclass
@@ -166,7 +177,8 @@ Guidelines:
         self,
         aws_service: AWSBedrockService,
         vector_store: Optional[VectorStoreService] = None,
-        use_rag: bool = True
+        use_rag: bool = True,
+        embedding_function: Any = None,
     ):
         """
         Initialize the ChatService.
@@ -175,6 +187,7 @@ Guidelines:
             aws_service: AWS Bedrock service for LLM access
             vector_store: Optional vector store for RAG
             use_rag: Whether to use RAG for context retrieval
+            embedding_function: Shared embedding function for indexing large attachments
         """
         self.aws_service = aws_service
         self.vector_store = vector_store
@@ -184,7 +197,90 @@ Guidelines:
         self.tickets: Dict[str, TicketContext] = {}
         self.attachments: List[ChatAttachment] = []
         self.conversation_id: str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
+        self._embedding_function = embedding_function
+        self._indexed_attachments: Set[str] = set()
+        self._attachment_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=ATTACHMENT_CHUNK_SIZE,
+            chunk_overlap=ATTACHMENT_CHUNK_OVERLAP,
+        )
+        self._attachment_chroma_client: Optional[Any] = None
+        self._attachment_collection: Optional[Any] = None
+        if embedding_function is not None:
+            self._init_attachment_store()
+
+    def _init_attachment_store(self) -> None:
+        """Create an ephemeral in-memory ChromaDB collection for large attachment chunks."""
+        try:
+            self._attachment_chroma_client = chromadb.Client()
+            col_name = f"att_{self.conversation_id}"[:63]
+            self._attachment_collection = self._attachment_chroma_client.get_or_create_collection(name=col_name)
+        except Exception as exc:
+            logger.warning("Could not create in-memory attachment store: %s", exc)
+            self._attachment_collection = None
+
+    def _index_attachment(self, name: str, text: str) -> bool:
+        """Chunk, embed, and store a large attachment for semantic retrieval."""
+        if self._attachment_collection is None or self._embedding_function is None:
+            return False
+        try:
+            chunks = self._attachment_splitter.split_text(text)
+            if not chunks:
+                return False
+            ids = [
+                hashlib.sha256(f"{name}::{i}::{c[:64]}".encode()).hexdigest()[:24]
+                for i, c in enumerate(chunks)
+            ]
+            metas = [{"attachment": name, "chunk_index": i} for i in range(len(chunks))]
+            embeddings = self._embedding_function.embed_documents(chunks)
+            self._attachment_collection.add(
+                embeddings=embeddings,
+                documents=chunks,
+                metadatas=metas,
+                ids=ids,
+            )
+            self._indexed_attachments.add(name)
+            logger.info("Indexed attachment '%s': %d chunks", name, len(chunks))
+            return True
+        except Exception as exc:
+            logger.warning("Failed to index attachment '%s': %s", name, exc)
+            return False
+
+    def _remove_indexed_attachment(self, name: str) -> None:
+        """Remove all chunks for a given attachment from the store."""
+        if name not in self._indexed_attachments or self._attachment_collection is None:
+            return
+        try:
+            self._attachment_collection.delete(where={"attachment": name})
+        except Exception:
+            pass
+        self._indexed_attachments.discard(name)
+
+    def _query_attachment_store(self, query: str, n_results: int = ATTACHMENT_RETRIEVAL_K) -> str:
+        """Retrieve the most relevant attachment chunks for a given query."""
+        if self._attachment_collection is None or self._embedding_function is None:
+            return ""
+        try:
+            if self._attachment_collection.count() == 0:
+                return ""
+            query_embedding = self._embedding_function.embed_query(query)
+            results = self._attachment_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=min(n_results, self._attachment_collection.count()),
+            )
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            if not docs:
+                return ""
+            sections: List[str] = []
+            for doc, meta in zip(docs, metas):
+                att_name = meta.get("attachment", "")
+                sections.append(f"[From: {att_name}]\n{doc}")
+            return "\n---\n".join(sections)
+        except Exception as exc:
+            logger.warning("Attachment store query failed: %s", exc)
+            return ""
+
     # ==========================================================================
     # CONTEXT MANAGEMENT
     # ==========================================================================
@@ -279,8 +375,17 @@ Guidelines:
             is_image=is_image
         )
         self.attachments.append(attachment)
-        
-        self._add_system_message(f"Added attachment: {name}")
+
+        if not is_image and len(content_str) > LARGE_ATTACHMENT_THRESHOLD:
+            indexed = self._index_attachment(name, content_str)
+            if indexed:
+                self._add_system_message(
+                    f"Added attachment: {name} ({len(content_str):,} chars, indexed for smart retrieval)"
+                )
+            else:
+                self._add_system_message(f"Added attachment: {name}")
+        else:
+            self._add_system_message(f"Added attachment: {name}")
         return attachment
     
     def remove_attachment(self, name: str) -> bool:
@@ -288,6 +393,7 @@ Guidelines:
         for i, att in enumerate(self.attachments):
             if att.name == name:
                 self.attachments.pop(i)
+                self._remove_indexed_attachment(name)
                 self._add_system_message(f"Removed attachment: {name}")
                 return True
         return False
@@ -296,6 +402,12 @@ Guidelines:
         """Clear all tickets and attachments."""
         self.tickets.clear()
         self.attachments.clear()
+        self._indexed_attachments.clear()
+        if self._attachment_collection is not None:
+            try:
+                self._attachment_collection.delete(where={})
+            except Exception:
+                pass
         self._add_system_message("Cleared all context (tickets and attachments)")
     
     # ==========================================================================
@@ -336,7 +448,7 @@ Guidelines:
             return error_msg
         
         # Build context
-        context_parts = self._build_context(include_attachments)
+        context_parts = self._build_context(include_attachments, user_query=user_message)
         
         # Get RAG context if enabled
         rag_context = ""
@@ -420,8 +532,16 @@ Guidelines:
         msg = ChatMessage(role="system", content=content)
         self.messages.append(msg)
     
-    def _build_context(self, include_attachments: Optional[List[str]] = None) -> List[str]:
-        """Build context string from tickets and attachments."""
+    def _build_context(
+        self,
+        include_attachments: Optional[List[str]] = None,
+        user_query: str = "",
+    ) -> List[str]:
+        """Build context string from tickets and attachments.
+
+        Large text attachments that have been indexed are not included inline.
+        Instead, the most relevant chunks are retrieved using *user_query*.
+        """
         parts = []
         
         # Clearly state currently loaded tickets
@@ -436,18 +556,44 @@ Guidelines:
         else:
             parts.append("**No tickets currently loaded.** Do not reference any previous tickets.")
         
-        # Add text attachments
+        # Add text attachments — small ones inline, large indexed ones via retrieval
         text_attachments = [a for a in self.attachments if not a.is_image]
-        if text_attachments:
+        inline_attachments = [
+            a for a in text_attachments
+            if a.name not in self._indexed_attachments
+            and (include_attachments is None or a.name in include_attachments)
+        ]
+        indexed_names = [
+            a.name for a in text_attachments
+            if a.name in self._indexed_attachments
+            and (include_attachments is None or a.name in include_attachments)
+        ]
+
+        if inline_attachments:
             parts.append("\n**Attached Documents:**")
-            for att in text_attachments:
-                if include_attachments is None or att.name in include_attachments:
-                    content = att.content
-                    if len(content) > 50000:
-                        content = content[:50000] + "\n... [truncated]"
-                    parts.append(f"\n--- {att.name} ({att.content_type}) ---")
-                    parts.append(content)
-        
+            for att in inline_attachments:
+                parts.append(f"\n--- {att.name} ({att.content_type}) ---")
+                parts.append(att.content)
+
+        if indexed_names and user_query:
+            retrieved = self._query_attachment_store(user_query)
+            if retrieved:
+                parts.append(
+                    f"\n**Relevant sections from large attached documents "
+                    f"({', '.join(indexed_names)}):**"
+                )
+                parts.append(retrieved)
+            else:
+                parts.append(
+                    f"\n**Large attached documents ({', '.join(indexed_names)}) "
+                    f"are indexed but no sections matched the current query.**"
+                )
+        elif indexed_names:
+            parts.append(
+                f"\n**Large attached documents ({', '.join(indexed_names)}) are indexed. "
+                f"Ask a question to retrieve relevant sections.**"
+            )
+
         # Note image attachments so the LLM knows they exist
         image_attachments = [a for a in self.attachments if a.is_image]
         if image_attachments:
@@ -505,6 +651,12 @@ Guidelines:
         self.messages.clear()
         self.tickets.clear()
         self.attachments.clear()
+        self._indexed_attachments.clear()
+        if self._attachment_collection is not None:
+            try:
+                self._attachment_collection.delete(where={})
+            except Exception:
+                pass
         self.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     def get_messages(self, include_system: bool = False) -> List[ChatMessage]:
@@ -615,3 +767,13 @@ Guidelines:
             ChatMessage.from_dict(m) 
             for m in data.get("messages", [])
         ]
+
+        self._indexed_attachments.clear()
+        if self._attachment_collection is not None:
+            try:
+                self._attachment_collection.delete(where={})
+            except Exception:
+                pass
+        for att in self.attachments:
+            if not att.is_image and len(att.content) > LARGE_ATTACHMENT_THRESHOLD:
+                self._index_attachment(att.name, att.content)

@@ -217,6 +217,7 @@ def _run_init_sync(
         aws_service=rag.aws_service,
         vector_store=rag.vector_store,
         use_rag=False,
+        embedding_function=shared_embedding_fn,
     )
     user_conversations_dir = os.path.join(conversations_dir, user_id)
     os.makedirs(user_conversations_dir, exist_ok=True)

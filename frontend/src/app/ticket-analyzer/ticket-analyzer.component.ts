@@ -45,9 +45,9 @@ interface TicketInfo {
 
       <div class="toolbar-group toolbar-attach">
         <input type="file" #fileInput multiple (change)="onFileSelect($event)" class="file-input-hidden" accept="image/*,.pdf,.doc,.docx,.txt" />
-        <button type="button" class="secondary toolbar-attach-btn" (click)="fileInput.click()" title="Attach files or paste images in the chat">
+        <button type="button" class="secondary toolbar-attach-btn" (click)="fileInput.click()" [disabled]="uploadingAttachment" title="Attach files or paste images in the chat">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-          Attach
+          {{ uploadingAttachment ? 'Uploading…' : 'Attach' }}
         </button>
       </div>
 
@@ -398,7 +398,7 @@ interface TicketInfo {
     }
 
     <app-ai-thinking-overlay
-      [open]="loading || loadingTicket || switchingModel"
+      [open]="loading || loadingTicket || switchingModel || uploadingAttachment"
       [title]="analyzerThinkingTitle"
       [subtitle]="analyzerThinkingSubtitle"
     />
@@ -787,6 +787,7 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   loading = false;
   loadingTicket = false;
   switchingModel = false;
+  uploadingAttachment = false;
   lastError = '';
   conversationTitle = '';
   jiraServerUrl = '';
@@ -815,12 +816,14 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   ) {}
 
   get analyzerThinkingTitle(): string {
+    if (this.uploadingAttachment) return 'Uploading attachment';
     if (this.loadingTicket && !this.loading) return 'Loading tickets';
     if (this.switchingModel) return 'Switching model';
     return 'Assistant is thinking';
   }
 
   get analyzerThinkingSubtitle(): string {
+    if (this.uploadingAttachment) return 'Processing and indexing the file — large documents may take a moment…';
     if (this.loadingTicket && !this.loading) return 'Fetching ticket details from Jira…';
     if (this.switchingModel) return 'Updating the chat session with your selected model…';
     return 'Processing your message or quick action…';
@@ -1026,10 +1029,22 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   onFileSelect(e: Event): void {
     const input = e.target as HTMLInputElement;
     const files = input.files ? Array.from(input.files) : [];
+    if (!files.length) return;
+    this.uploadingAttachment = true;
+    let done = 0;
+    const failed: string[] = [];
     files.forEach(file => {
       this.api.postFile('/chat/add-attachment', file).subscribe({
-        next: () => { this.loadState(); input.value = ''; },
-        error: () => {},
+        next: () => {
+          done++;
+          input.value = '';
+          if (done === files.length) { this.uploadingAttachment = false; this.loadState(); if (failed.length) this.toast.error(`Failed to attach: ${failed.join(', ')}`); }
+        },
+        error: () => {
+          done++;
+          failed.push(file.name);
+          if (done === files.length) { this.uploadingAttachment = false; this.loadState(); this.toast.error(`Failed to attach: ${failed.join(', ')}`); }
+        },
       });
     });
   }
@@ -1045,9 +1060,10 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
         if (!blob) return;
         const ext = item.type === 'image/png' ? 'png' : 'jpg';
         const file = new File([blob], `pasted_${Date.now()}.${ext}`, { type: item.type });
+        this.uploadingAttachment = true;
         this.api.postFile('/chat/add-attachment', file).subscribe({
-          next: () => this.loadState(),
-          error: () => {},
+          next: () => { this.uploadingAttachment = false; this.loadState(); },
+          error: () => { this.uploadingAttachment = false; this.toast.error('Failed to attach pasted image.'); },
         });
         return;
       }

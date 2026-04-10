@@ -104,9 +104,9 @@ import { ToastService } from '../toast.service';
     .add-hint { margin: 0.5rem 0 1rem; }
     .file-list { margin-top: var(--space-sm); padding-left: 1.25rem; font-size: 0.9rem; }
     .kb-size { margin-top: var(--space-md); font-size: 0.9rem; color: var(--app-text-muted); }
-    .sources-list { margin-top: var(--space-md); padding: var(--space-md); background: var(--hyland-grey); border-radius: var(--radius-sm); }
-    .sources-list h3 { font-size: 0.95rem; margin: 0 0 0.5rem; }
-    .sources-list ul { margin: 0; padding-left: 1.25rem; font-size: 0.9rem; }
+    .sources-list { margin-top: var(--space-md); padding: var(--space-md); background: var(--app-surface-muted); border: 1px solid var(--app-card-border); border-radius: var(--radius-sm); }
+    .sources-list h3 { font-size: 0.95rem; margin: 0 0 0.5rem; color: var(--app-text); }
+    .sources-list ul { margin: 0; padding-left: 1.25rem; font-size: 0.9rem; color: var(--app-text); }
     .sources-list .source-type { font-weight: 600; margin-right: 0.5rem; }
     .message { margin-top: 1rem; padding: 0.75rem; border-radius: 6px; font-size: 0.95rem; }
     .message.success { background: rgba(19,234,193,0.15); border-left: 4px solid var(--hyland-teal); }

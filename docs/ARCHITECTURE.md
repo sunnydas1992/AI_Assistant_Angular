@@ -55,6 +55,8 @@ flowchart TB
 
   Chat --> Bedrock
   Chat --> VectorStore
+  Chat --> AttStore["Attachment Store (in-memory ChromaDB)"]
+  AttStore --> EmbeddingService
 
   subgraph shared [Shared]
     EmbeddingService[EmbeddingService]
@@ -153,7 +155,7 @@ flowchart TB
 |--------------------|------------------|-------------------------------------------------------------------------|
 | `/config`          | ConfigComponent  | Jira/Confluence/AWS configuration; Initialize; Advanced settings (model, etc.). |
 | `/knowledge-base`  | KnowledgeBaseComponent | Populate KB from tickets, Confluence URLs, uploads.                 |
-| `/ticket-analyzer` | TicketAnalyzerComponent | Load tickets, chat with AI, quick actions, model selection. **Copy** response to clipboard; **Post to Jira** via preview/edit overlay. |
+| `/ticket-analyzer` | TicketAnalyzerComponent | Load tickets, chat with AI, quick actions, model selection. **Copy** response to clipboard; **Post to Jira** via preview/edit overlay. Ticket detail renders Jira wiki as **formatted HTML** (`[innerHTML]` + `DomSanitizer`). Error toast for invalid ticket IDs. Upload progress overlay during file attachment processing. |
 | `/test-cases`      | TestCasesComponent     | Generate test cases (with optional instructions), refine all/one, **confidence-score guardrail** (low-confidence cases require human approval before publishing), **Check Xray for duplicates** (exact + semantic similarity with match-type/score badges), publish to Xray (skips duplicates by default), export. |
 | `/test-plan`       | TestPlanComponent      | Generate/refine test plan, publish to Confluence.                      |
 
@@ -169,7 +171,7 @@ All except `/config` are protected by `initGuard`.
 
 - **Config**: User enters credentials and AWS profile → `POST /api/init` → on success, `InitService.setInitialized(true)` and success popup; model list refreshed.
 - **Test cases**: User can set “Instructions for generation” → Generate calls `POST /api/test-cases/generate` with `user_instructions`; results shown as editable items. Each test case receives an AI **confidence score** (1-5); cases with confidence below 3 are flagged **Needs Review** and blocked from publishing until the user explicitly approves them (human-in-the-loop guardrail). “Apply feedback to all” → `POST /api/test-cases/refine`; “Apply feedback” on one item → `POST /api/test-cases/refine-single`. **Check Xray for duplicates** → `POST /api/test-cases/check-xray-duplicates` — two-pass detection: (1) exact normalized match, (2) semantic similarity via sentence embeddings (cosine ≥ 80%). Response includes `match_type` (`"exact"` / `"semantic"`) and `similarity` score; UI shows "Duplicate" or "Similar (N%)" badges accordingly. Publish uses `write-to-xray` or `write-to-xray-selected` with `skip_if_duplicate` (default true) — both exact and semantic duplicates are skipped. Jira browse links use `GET /api/connection-settings` for `jira_server`.
-- **Ticket analyzer**: Model list from `GET /api/bedrock-models` (no params so backend uses session config); default model from `GET /api/init-status` → `current_model_id`. Each assistant response shows a **Copy** button (writes raw text to clipboard with a 2-second "Copied" confirmation) and a **Post to Jira** button. Clicking "Post to Jira" opens a modal overlay showing the comment in an editable textarea with a live formatted preview; the user can edit, then **Confirm** to post via `POST /api/chat/post-to-jira` or **Cancel** (button / backdrop click / Escape key) to return without posting.
+- **Ticket analyzer**: Model list from `GET /api/bedrock-models` (no params so backend uses session config); default model from `GET /api/init-status` → `current_model_id`. Each assistant response shows a **Copy** button (writes raw text to clipboard with a 2-second "Copied" confirmation) and a **Post to Jira** button. Clicking "Post to Jira" opens a modal overlay showing the comment in an editable textarea with a live formatted preview; the user can edit, then **Confirm** to post via `POST /api/chat/post-to-jira` or **Cancel** (button / backdrop click / Escape key) to return without posting. Comments are converted from Markdown to **Jira wiki notation** before posting so formatting is preserved in Jira. Ticket detail overlays show **rendered HTML** (Jira's rendered fields or fallback wiki-to-HTML) for descriptions, comments, acceptance criteria, steps to reproduce, and environment. **Invalid ticket IDs** show an error toast. **File upload** shows an "Uploading attachment" overlay with a thinking indicator; the Attach button is disabled with "Uploading…" text while processing. Large attachments (> 30K chars) are automatically indexed for semantic retrieval rather than truncated.
 
 ---
 
@@ -228,6 +230,8 @@ Blocking work (LLM calls, ChromaDB, Jira/Confluence/Bedrock I/O) is run in the *
 - **Role**: Jira and Confluence API access; Xray test creation and duplicate detection.
 - **Uses**: `jira` library, `atlassian-python-api` (Confluence).
 - **Capabilities**: Jira ticket details, Confluence page content, add comment, create Xray test issues (summary aligned with **`app/services/xray_duplicate.py`** — `extract_xray_comparable_summary`: BDD uses `title`, Xray format uses `**Test Summary:**` else `title`).
+- **Rendered ticket details**: `get_jira_ticket_structured()` uses Jira's `expand='renderedFields'` to return pre-rendered HTML for description, comments, acceptance criteria, steps-to-reproduce, and environment. Falls back to a built-in `_jira_wiki_to_html()` converter that handles `{color}`, `*bold*`, `+underline+`, `_italic_`, `-strikethrough-`, `{quote}`, `{code}`, `{noformat}`, headings, lists, and links.
+- **Post-to-Jira formatting**: Comments posted via the Ticket Analyzer are converted from Markdown (AI output) to Jira wiki notation (`_markdown_to_jira_wiki`) so headings, bold, inline code, and lists render correctly in Jira.
 - **Duplicate detection** (`find_existing_xray_test`): Two-pass strategy applied in order:
   1. **Pass 1 — Exact normalized match**: JQL narrows candidates, then casefold + whitespace-collapse comparison. Tie-break picks oldest `created`.
   2. **Pass 2 — Semantic similarity**: If no exact match and the shared `EmbeddingService` is available, candidate summaries are embedded alongside the target using the same sentence-transformer model (`all-MiniLM-L6-v2`). Cosine similarity ≥ 80% (configurable via `SEMANTIC_SIMILARITY_THRESHOLD` in `xray_duplicate.py`) flags a match, returning the match type (`"exact"` or `"semantic"`) and similarity score.
@@ -258,6 +262,7 @@ Blocking work (LLM calls, ChromaDB, Jira/Confluence/Bedrock I/O) is run in the *
 
 - **Role**: Ticket analyzer chat: tickets, attachments, message history, optional RAG context; quick actions (summarize, gaps, risk, test suggestions).
 - **Uses**: Same `AWSBedrockService` and `VectorStoreService` as JiraRAG; prompts for chat and quick actions.
+- **Smart attachment retrieval**: When a text attachment exceeds 30K characters it is automatically chunked (1,500 chars, 200 overlap), embedded using the shared `EmbeddingService`, and stored in an ephemeral in-memory ChromaDB collection. On each user message, the top 8 most relevant chunks are retrieved via semantic search and included in the LLM context — replacing the previous hard-truncation at 50K characters. Small attachments (< 30K) are still included inline in full. The indexed store is cleaned up on attachment removal, context clear, and session restore (re-indexes from serialized content).
 
 ### 4.8 ConversationStore
 
