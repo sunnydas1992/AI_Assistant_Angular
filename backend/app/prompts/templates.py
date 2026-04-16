@@ -40,6 +40,7 @@ where each line is the test case number (in order), N is 1-5 (1=low relevance/ac
     XRAY_INSTRUCTIONS = """
 Based on all the provided information, write multiple distinct manual test cases in a format suitable for Xray in Jira.
 For each test case, provide a 'Test Summary' and a table of steps with 'Step', 'Test Data', and 'Expected Result'.
+Do NOT include "Test Case N:" numbering in the output. Separate each test case with a line containing only "---".
 
 OUTPUT (in structured markdown format). After all test cases, add a separate section:
 
@@ -52,20 +53,30 @@ where each line is the test case number (in order), N is 1-5 (1=low relevance/ac
 
 Example test case format:
 
-**Test Case 1:**
 **Test Summary:** Verify user can successfully log in with valid credentials.
 **Steps:**
 | Step | Test Data | Expected Result |
 |---|---|---|
 | 1. Navigate to the login page. | URL: /login | The login page is displayed. |
 | 2. Enter a valid username and password. | Username: valid_user, Password: valid_password | User is logged in and redirected. |
+
+---
+
+**Test Summary:** Verify user cannot log in with invalid credentials.
+**Steps:**
+| Step | Test Data | Expected Result |
+|---|---|---|
+| 1. Navigate to the login page. | URL: /login | The login page is displayed. |
+| 2. Enter an invalid password. | Username: valid_user, Password: wrong | An error message is displayed. |
 """
 
     SINGLE_TEST_CASE_REFINEMENT = """
 You are an expert QA Engineer. Refine the following test case based on the user's feedback.
 Maintain the original format and structure while incorporating the requested changes.
 IMPORTANT: Return exactly ONE test case. Do not merge multiple test cases into one, and do not create new separate test cases.
-For Xray format, keep the header line intact (e.g., "**Test Case 3: Title**" or "## Test Case 3: Title").
+Do NOT include "Test Case N:" numbering in the output.
+For Xray format, update the **Test Summary:** line to accurately reflect the refined scenario.
+For BDD format, update the Scenario title to reflect the refined scenario.
 
 After the refined test case, add on a new line:
 

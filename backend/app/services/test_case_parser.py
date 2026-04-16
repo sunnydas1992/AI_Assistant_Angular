@@ -56,6 +56,10 @@ class TestCaseParser:
     XRAY_WEAK_PATTERN = re.compile(
         r"(?m)^\s*Test\s*Case\s*(\d+)\s*:\s*(.*)$"
     )
+    XRAY_SUMMARY_PATTERN = re.compile(
+        r"(?m)^\s*\*\*\s*Test\s+Summary\s*:\s*\*\*\s*(.+)$"
+    )
+    XRAY_HR_SEPARATOR = re.compile(r"(?m)^\s*---+\s*$")
     # Match "Scenario Outline" before "Scenario" so both split into separate test cases
     GHERKIN_SPLIT_PATTERN = re.compile(
         r'\n\s*(Feature|Scenario\s+Outline|Scenario):\s*',
@@ -555,6 +559,7 @@ class TestCaseParser:
         Split Xray-style markdown content into individual (title, content) tuples.
         
         Handles variants like:
+        - **Test Summary:** Title  (separated by ---)
         - **Test Case 1:** Title...
         - **Test Case 1: Title...**
         - ## Test Case 1: Title
@@ -567,8 +572,13 @@ class TestCaseParser:
         """
         # Normalize line endings
         s = text.replace('\r\n', '\n')
+
+        # Try --- separator splitting (new format without "Test Case N:")
+        hr_results = self._split_by_hr_separator(s)
+        if hr_results:
+            return hr_results
         
-        # Try primary pattern first
+        # Try primary "Test Case N:" pattern
         matches = list(self.XRAY_HEADER_PATTERN.finditer(s))
         
         # Fallback to weaker pattern
@@ -581,6 +591,53 @@ class TestCaseParser:
         
         # Build slices between headers
         return self._extract_xray_blocks(s, matches)
+
+    def _split_by_hr_separator(self, text: str) -> List[Tuple[str, str]]:
+        """
+        Split text by --- horizontal-rule separators. Each block is expected to
+        contain a **Test Summary:** line from which the title is extracted.
+        Returns empty list if the text doesn't use this format.
+        """
+        has_hr = self.XRAY_HR_SEPARATOR.search(text)
+        has_summary = self.XRAY_SUMMARY_PATTERN.search(text)
+        has_old_header = self.XRAY_HEADER_PATTERN.search(text) or self.XRAY_WEAK_PATTERN.search(text)
+
+        if has_old_header:
+            return []
+
+        if not has_summary:
+            return []
+
+        blocks = self.XRAY_HR_SEPARATOR.split(text)
+        results: List[Tuple[str, str]] = []
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+            if not self._has_substantive_content_simple(block):
+                continue
+            title = self._extract_summary_title(block)
+            results.append((title, block))
+        return results if len(results) >= 1 else []
+
+    def _extract_summary_title(self, block: str) -> str:
+        """Extract title from the **Test Summary:** line in a block."""
+        m = self.XRAY_SUMMARY_PATTERN.search(block)
+        if m:
+            raw = m.group(1).strip().rstrip('*').strip()
+            return self._strip_leading_number(raw) or raw
+        lines = [ln for ln in block.split('\n') if ln.strip()]
+        if lines:
+            return lines[0].strip().strip('* ')
+        return ""
+
+    @staticmethod
+    def _has_substantive_content_simple(block: str) -> bool:
+        """Check if a block has meaningful content (at least a table or summary)."""
+        has_table = '| Step' in block or '|Step' in block or re.search(r"\|\s*\d+\.\s*", block)
+        has_summary = '**Test Summary:**' in block
+        has_min_len = len(block) >= 40
+        return bool(has_table or has_summary or has_min_len)
     
     def _handle_single_case(self, text: str) -> List[Tuple[str, str]]:
         """Handle text with no clear test case headers."""

@@ -1229,11 +1229,13 @@ export class TestCasesComponent implements OnInit, OnDestroy {
     const contentText = items.map(tc => tc.content).join('\n\n');
     const body = this.publishReviewMode === 'all'
       ? {
-          output_text: items.map((tc, i) =>
-            this.outputFormat === 'Xray Jira Test Format'
-              ? `**Test Case ${i + 1}: ${tc.title}**\n**Test Summary:** ${tc.title}\n\n${tc.content}`
-              : `## ${tc.title}\n\n${tc.content}`
-          ).join('\n\n'),
+          output_text: items.map(tc => {
+            if (this.outputFormat === 'Xray Jira Test Format') {
+              const hasSummary = tc.content.includes('**Test Summary:**');
+              return hasSummary ? tc.content : `**Test Summary:** ${tc.title}\n\n${tc.content}`;
+            }
+            return `## ${tc.title}\n\n${tc.content}`;
+          }).join(this.outputFormat === 'Xray Jira Test Format' ? '\n\n---\n\n' : '\n\n'),
           output_format: this.effectivePublishOutputFormat(contentText),
           project_key: this.xrayProjectKey.trim(),
           skip_if_duplicate: true,
@@ -1731,9 +1733,10 @@ export class TestCasesComponent implements OnInit, OnDestroy {
 
   buildOutputText(): string {
     if (this.outputFormat === 'Xray Jira Test Format') {
-      return this.items.map((tc, i) =>
-        `**Test Case ${i + 1}: ${tc.title}**\n**Test Summary:** ${tc.title}\n\n${tc.content}`
-      ).join('\n\n');
+      return this.items.map(tc => {
+        const hasSummary = tc.content.includes('**Test Summary:**');
+        return hasSummary ? tc.content : `**Test Summary:** ${tc.title}\n\n${tc.content}`;
+      }).join('\n\n---\n\n');
     }
     return this.items.map(tc => `## ${tc.title}\n\n${tc.content}`).join('\n\n');
   }
@@ -1766,9 +1769,10 @@ export class TestCasesComponent implements OnInit, OnDestroy {
 
   buildCurrentTestsText(): string {
     if (this.outputFormat === 'Xray Jira Test Format') {
-      return this.items.map((tc, i) =>
-        `**Test Case ${i + 1}: ${tc.title}**\n**Test Summary:** ${tc.title}\n\n${tc.content}`
-      ).join('\n\n');
+      return this.items.map(tc => {
+        const hasSummary = tc.content.includes('**Test Summary:**');
+        return hasSummary ? tc.content : `**Test Summary:** ${tc.title}\n\n${tc.content}`;
+      }).join('\n\n---\n\n');
     }
     return this.items.map(tc => `## ${tc.title}\n\n${tc.content}`).join('\n\n');
   }
@@ -1883,7 +1887,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
 
   /**
    * Extract an updated title from refined test-case content.
-   * Handles Xray headers ("**Test Case N: Title**", "## Test Case N: Title")
+   * Handles Xray headers ("**Test Summary:** Title", "**Test Case N: Title**"),
    * and BDD headers ("Scenario: Title", "Scenario Outline: Title").
    */
   private extractTitleFromContent(content: string, fallback: string): string {
@@ -1893,7 +1897,13 @@ export class TestCasesComponent implements OnInit, OnDestroy {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // Xray: **Test Case 9: Title** or ## Test Case 9: Title
+      // Xray: **Test Summary:** Title
+      const summaryMatch = trimmed.match(
+        /^\*\*\s*Test\s+Summary\s*:\s*\*\*\s*(.+)$/i
+      );
+      if (summaryMatch?.[1]) return summaryMatch[1].trim();
+
+      // Xray (legacy): **Test Case 9: Title** or ## Test Case 9: Title
       const xrayMatch = trimmed.match(
         /^(?:#{1,6}\s*)?(?:\*\*)?\s*Test\s*Case\s*\d+\s*:\s*(.*?)\s*(?:\*\*)?\s*$/i
       );
