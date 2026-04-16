@@ -69,7 +69,7 @@ export interface TestCaseItem {
         <p class="context-line">Source: {{ sourceType === 'jira' ? 'Jira' : 'Confluence' }} — {{ sourceInfo.ticket_id }}</p>
       }
       @if (modelOptions.length) {
-        <div class="model-switcher-strip">
+        <div class="model-switcher-strip" [class.model-switching]="switchingModel">
           <span class="model-strip-label">AI Model</span>
           <select [(ngModel)]="selectedModelId" (ngModelChange)="switchModel()" class="model-select" [disabled]="switchingModel">
             @for (opt of modelOptions; track opt.value) {
@@ -77,7 +77,8 @@ export interface TestCaseItem {
             }
           </select>
           @if (switchingModel) {
-            <span class="switching-hint">Switching…</span>
+            <span class="loading-spinner switching-spinner"></span>
+            <span class="switching-hint">Switching model…</span>
           }
           <button type="button" class="link-btn refresh-models-btn" (click)="loadModels(true)" [disabled]="switchingModel">Refresh</button>
         </div>
@@ -572,7 +573,10 @@ export interface TestCaseItem {
       max-width: 42rem; animation: modelStripIn 0.35s ease both;
     }
     .model-select { min-height: 2rem; font-size: 0.88rem; padding: 0.2rem 0.4rem; border-radius: 6px; border: 1px solid var(--app-input-border); background: var(--app-input-bg); color: var(--app-text); }
-    .switching-hint { font-size: 0.75rem; color: var(--hyland-teal, #13eac1); }
+    .model-switching { border-color: var(--hyland-teal, #13eac1); animation: modelSwitchPulse 1.2s ease-in-out infinite; }
+    @keyframes modelSwitchPulse { 0%, 100% { border-color: var(--hyland-teal, #13eac1); } 50% { border-color: var(--app-card-border); } }
+    .switching-spinner { width: 0.9rem; height: 0.9rem; margin-right: 0; }
+    .switching-hint { font-size: 0.78rem; font-weight: 600; color: var(--hyland-teal, #13eac1); }
     .refresh-models-btn { font-size: 0.78rem; }
     .form-card { max-width: 720px; }
     .form-grid {
@@ -1405,6 +1409,7 @@ export class TestCasesComponent implements OnInit, OnDestroy {
   changeSource(): void {
     this.sourceLoaded = false;
     this.sourceInfo = null;
+    this.targetId = '';
   }
 
   viewTicketDetails(ticketId: string): void {

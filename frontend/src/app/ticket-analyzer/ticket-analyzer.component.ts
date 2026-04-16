@@ -53,13 +53,16 @@ interface TicketInfo {
 
       <span class="toolbar-divider"></span>
 
-      <div class="toolbar-group toolbar-model">
+      <div class="toolbar-group toolbar-model" [class.model-switching]="switchingModel">
         <label class="toolbar-label">Model</label>
         <select [(ngModel)]="selectedModelId" (ngModelChange)="switchModel()" class="model-select" [disabled]="switchingModel" title="{{ modelOptions.length }} models available">
           @for (opt of modelOptions; track opt.value) {
             <option [value]="opt.value">{{ opt.label }}</option>
           }
         </select>
+        @if (switchingModel) {
+          <span class="loading-spinner switching-spinner"></span>
+        }
         <button type="button" class="icon-btn-sm" (click)="loadModels(true)" [disabled]="switchingModel" title="Refresh model list">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
         </button>
@@ -104,7 +107,7 @@ interface TicketInfo {
       </div>
     </div>
     @if (switchingModel) {
-      <p class="switching-hint">Switching to selected model, please wait…</p>
+      <p class="switching-hint"><span class="loading-spinner switching-spinner"></span> Switching to selected model, please wait…</p>
     }
 
     <!-- ── Ticket / Attachment Strip ── -->
@@ -477,7 +480,11 @@ interface TicketInfo {
     .toolbar-convo { gap: 0.35rem; }
     .convo-title-input { width: 130px; margin: 0; font-size: 0.82rem; padding: 0.35rem 0.5rem; }
     .toolbar-sm-btn { font-size: 0.78rem; padding: 0.3rem 0.55rem; white-space: nowrap; }
+    .model-switching { border-color: var(--hyland-teal, #13eac1); animation: modelSwitchPulse 1.2s ease-in-out infinite; }
+    @keyframes modelSwitchPulse { 0%, 100% { border-color: var(--hyland-teal, #13eac1); } 50% { border-color: transparent; } }
+    .switching-spinner { width: 0.9rem; height: 0.9rem; margin-right: 0.25rem; }
     .switching-hint {
+      display: flex; align-items: center; justify-content: center;
       font-size: 0.8rem; color: var(--hyland-teal, #13eac1); text-align: center;
       margin: 0.35rem 0 0; font-weight: 600;
     }
