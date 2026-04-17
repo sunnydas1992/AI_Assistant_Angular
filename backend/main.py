@@ -392,6 +392,75 @@ def api_jira_ticket_info(request: Request, ticket_id: str = ""):
     return data
 
 
+@app.post("/api/jira/similar-tickets")
+async def api_similar_tickets(request: Request, ticket_id: str = Form(...)):
+    rag = get_session_rag(request)
+    tid = ticket_id.strip()
+    if not tid:
+        raise HTTPException(status_code=400, detail="ticket_id is required")
+
+    embed_fn = None
+    try:
+        svc = getattr(request.app.state, "embedding_service", None)
+        if svc:
+            embed_fn = svc.get_embedding_function()
+    except Exception:
+        pass
+
+    result = await run_sync(rag.atlassian.find_similar_tickets, tid, 10, embed_fn)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Could not find ticket {tid}")
+    return result
+
+
+class SimilarTicketsSummaryBody(BaseModel):
+    ticket_id: str
+    similar_ticket_ids: List[str]
+
+
+@app.post("/api/jira/similar-tickets-summary")
+async def api_similar_tickets_summary(request: Request, body: SimilarTicketsSummaryBody):
+    rag = get_session_rag(request)
+    chat = get_session_chat(request)
+    tid = body.ticket_id.strip()
+    ids = [s.strip() for s in body.similar_ticket_ids if s.strip()]
+    if not tid or not ids:
+        raise HTTPException(status_code=400, detail="ticket_id and similar_ticket_ids are required")
+
+    if not chat.aws_service.llm:
+        raise HTTPException(status_code=400, detail="LLM not initialized. Check AWS configuration.")
+
+    context_text = await run_sync(rag.atlassian.get_similar_tickets_context, ids)
+    if not context_text:
+        raise HTTPException(status_code=404, detail="Could not fetch details for similar tickets")
+
+    prompt = (
+        f"You are analyzing Jira tickets similar to {tid} that have already been resolved.\n\n"
+        "Below are the details and comments from these resolved tickets:\n\n"
+        f"{context_text}\n\n"
+        "Please provide a concise summary covering:\n"
+        "1. **Common Resolution Patterns** - What themes or approaches appear across these tickets?\n"
+        "2. **Specific Solutions** - What concrete fixes, code changes, or configuration updates were applied?\n"
+        "3. **Key Takeaways** - What lessons or recommendations can be applied to the current ticket?\n\n"
+        "Format your response in clear markdown."
+    )
+
+    from langchain_core.messages import HumanMessage as _HM, SystemMessage as _SM
+    try:
+        async with _get_heavy_semaphore():
+            llm_response = await run_sync(
+                chat.aws_service.llm.invoke,
+                [
+                    _SM(content="You are a helpful technical analyst summarizing how similar Jira tickets were resolved."),
+                    _HM(content=prompt),
+                ],
+            )
+        return {"summary": llm_response.content, "ok": True}
+    except Exception as e:
+        logger.exception("similar-tickets-summary failed error=%s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/init")
 async def api_init(
     request: Request,

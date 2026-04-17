@@ -386,12 +386,100 @@ interface TicketInfo {
                   }
                 </div>
               }
+
+              <!-- Similar Tickets Section -->
+              @if (similarTicketsExpanded) {
+                <div class="td-section td-similar-section">
+                  <h4 class="td-section-title">
+                    Similar Resolved Tickets
+                    @if (similarTickets.length) { <span class="td-similar-count">({{ similarTickets.length }})</span> }
+                    <button type="button" class="link-btn" (click)="similarTicketsExpanded = false">Hide</button>
+                  </h4>
+
+                  @if (loadingSimilarTickets) {
+                    <div class="td-similar-loading"><span class="loading-spinner"></span> Searching for similar tickets…</div>
+                  } @else if (!similarTickets.length) {
+                    <p class="td-similar-empty">No similar resolved tickets found in this project.</p>
+                  } @else {
+                    <div class="td-similar-actions">
+                      <button class="secondary td-similar-summary-btn" (click)="generateSimilarSummary(ticketDetailData.ticket_id)" [disabled]="loadingSimilarSummary || !selectedSimilarTickets.size">
+                        @if (loadingSimilarSummary) {
+                          <span class="loading-spinner"></span> Generating…
+                        } @else {
+                          Generate AI Summary ({{ selectedSimilarTickets.size }})
+                        }
+                      </button>
+                      <button class="secondary td-similar-summary-btn" (click)="addSimilarTicketsToContext()" [disabled]="addingSimilarToContext || similarTicketsAddedToContext || !selectedSimilarTickets.size">
+                        @if (addingSimilarToContext) {
+                          <span class="loading-spinner"></span> Adding…
+                        } @else if (similarTicketsAddedToContext) {
+                          Added to Chat Context
+                        } @else {
+                          Add Selected to Context ({{ selectedSimilarTickets.size }})
+                        }
+                      </button>
+                      <label class="td-similar-select-all">
+                        <input type="checkbox" [checked]="selectedSimilarTickets.size === similarTickets.length" (change)="toggleAllSimilarTickets($event)" />
+                        <span>Select All</span>
+                      </label>
+                    </div>
+
+                    @if (loadingSimilarSummary) {
+                      <div class="td-similar-loading"><span class="loading-spinner"></span> Analyzing resolution patterns…</div>
+                    }
+
+                    @if (similarTicketsSummary) {
+                      <div class="td-similar-summary-card">
+                        <h5 class="td-similar-summary-title">AI Resolution Summary</h5>
+                        <div class="td-rendered" [innerHTML]="trustHtml(renderMarkdown(similarTicketsSummary))"></div>
+                      </div>
+                    }
+
+                    <ul class="td-similar-list">
+                      @for (st of similarTickets; track st.key) {
+                        <li class="td-similar-item" [class.td-similar-item--deselected]="!selectedSimilarTickets.has(st.key)">
+                          <div class="td-similar-item-header">
+                            <input type="checkbox" class="td-similar-checkbox" [checked]="selectedSimilarTickets.has(st.key)" (change)="toggleSimilarTicket(st.key)" />
+                            @if (jiraServerUrl) {
+                              <a [href]="jiraServerUrl + '/browse/' + st.key" target="_blank" rel="noopener" class="td-similar-key">{{ st.key }}</a>
+                            } @else {
+                              <strong class="td-similar-key">{{ st.key }}</strong>
+                            }
+                            <span class="td-badge">{{ st.status }}</span>
+                            @if (st.resolution) { <span class="td-badge td-badge--resolution">{{ st.resolution }}</span> }
+                            @if (jiraServerUrl) {
+                              <a [href]="jiraServerUrl + '/browse/' + st.key" target="_blank" rel="noopener" class="td-similar-open-jira" title="Open in Jira">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                              </a>
+                            }
+                            <button type="button" class="td-similar-remove" title="Remove" (click)="removeSimilarTicket(st.key)">&times;</button>
+                          </div>
+                          <div class="td-similar-item-summary">{{ st.summary }}</div>
+                          <div class="td-similar-item-meta">
+                            @if (st.similarity) { <span class="td-similarity">{{ (st.similarity * 100).toFixed(0) }}% match</span> }
+                            <span>{{ st.assignee }}</span>
+                            <span>Updated: {{ st.updated }}</span>
+                            <span>{{ st.comment_count }} comment{{ st.comment_count !== 1 ? 's' : '' }}</span>
+                          </div>
+                        </li>
+                      }
+                    </ul>
+                  }
+                </div>
+              }
             </div>
             <div class="overlay-footer overlay-footer--spaced">
-              <div>
+              <div class="overlay-footer-left">
                 @if (jiraServerUrl && ticketDetailData.ticket_id) {
                   <a [href]="jiraServerUrl + '/browse/' + ticketDetailData.ticket_id" target="_blank" rel="noopener" class="primary">Open in Jira</a>
                 }
+                <button class="secondary" (click)="fetchSimilarTickets(ticketDetailData.ticket_id)" [disabled]="loadingSimilarTickets || similarTicketsExpanded">
+                  @if (loadingSimilarTickets) {
+                    <span class="loading-spinner"></span> Searching…
+                  } @else {
+                    View Similar Tickets
+                  }
+                </button>
               </div>
               <button class="secondary" (click)="closeTicketDetails()">Close</button>
             </div>
@@ -757,6 +845,40 @@ interface TicketInfo {
     .td-rendered ::ng-deep th { font-weight: 700; background: rgba(0,0,0,0.06); }
     .td-rendered ::ng-deep img { max-width: 100%; height: auto; border-radius: 4px; }
 
+    /* ── Similar Tickets ── */
+    .td-similar-section { border-top: 1px solid var(--app-card-border); padding-top: 0.75rem; }
+    .td-similar-count { font-weight: 400; color: var(--app-text-muted); }
+    .td-similar-loading { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--app-text-muted); padding: 0.75rem 0; }
+    .td-similar-empty { font-size: 0.85rem; color: var(--app-text-muted); margin: 0.5rem 0; }
+    .td-similar-actions { margin-bottom: 0.75rem; }
+    .td-similar-summary-btn { font-size: 0.82rem; display: inline-flex; align-items: center; gap: 0.4rem; }
+    .td-similar-summary-card {
+      background: var(--app-surface-muted); border: 1px solid var(--app-card-border);
+      border-radius: var(--radius-sm); padding: 0.75rem 1rem; margin-bottom: 0.75rem;
+    }
+    .td-similar-summary-title { font-size: 0.85rem; font-weight: 700; margin: 0 0 0.5rem; color: var(--hyland-blue); }
+    .td-similar-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+    .td-similar-item {
+      border: 1px solid var(--app-card-border); border-radius: var(--radius-sm);
+      padding: 0.6rem 0.75rem; background: var(--app-surface-muted);
+    }
+    .td-similar-item--deselected { opacity: 0.5; }
+    .td-similar-item-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .td-similar-checkbox { width: 15px; height: 15px; cursor: pointer; accent-color: var(--hyland-blue); flex-shrink: 0; }
+    .td-similar-select-all { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; cursor: pointer; color: var(--app-text-muted); margin-left: 0.5rem; }
+    .td-similar-select-all input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--hyland-blue); }
+    .td-similar-key { font-size: 0.85rem; color: var(--hyland-blue); text-decoration: none; font-weight: 700; }
+    a.td-similar-key:hover { text-decoration: underline; }
+    .td-similar-open-jira { color: var(--app-text-muted); display: inline-flex; align-items: center; margin-left: auto; }
+    .td-similar-open-jira:hover { color: var(--hyland-blue); }
+    .td-similar-remove { background: none; border: none; color: var(--app-text-muted); font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 0 0.2rem; margin-left: 0.25rem; border-radius: 3px; }
+    .td-similar-remove:hover { color: #cf222e; background: rgba(207,34,46,0.1); }
+    .td-badge--resolution { background: rgba(46,160,67,0.15); color: #1a7f37; }
+    .td-similar-item-summary { font-size: 0.84rem; margin: 0.25rem 0; line-height: 1.4; }
+    .td-similar-item-meta { display: flex; gap: 1rem; font-size: 0.75rem; color: var(--app-text-muted); flex-wrap: wrap; }
+    .td-similarity { font-weight: 600; color: var(--hyland-blue); }
+    .overlay-footer-left { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+
     /* ── Responsive ── */
     @media (max-width: 700px) {
       .context-toolbar { flex-direction: column; align-items: stretch; }
@@ -810,6 +932,14 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   ticketDetailData: any = null;
   loadingTicketDetails = false;
   commentsExpanded = false;
+  similarTickets: any[] = [];
+  loadingSimilarTickets = false;
+  similarTicketsExpanded = false;
+  similarTicketsSummary = '';
+  loadingSimilarSummary = false;
+  addingSimilarToContext = false;
+  similarTicketsAddedToContext = false;
+  selectedSimilarTickets = new Set<string>();
   historyOpen = false;
   private lastSentMessage = '';
   private lastQuickActionKey = '';
@@ -1032,6 +1162,109 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
   closeTicketDetails(): void {
     this.ticketDetailOverlayOpen = false;
     this.ticketDetailData = null;
+    this.similarTickets = [];
+    this.similarTicketsExpanded = false;
+    this.similarTicketsSummary = '';
+    this.loadingSimilarTickets = false;
+    this.loadingSimilarSummary = false;
+    this.addingSimilarToContext = false;
+    this.similarTicketsAddedToContext = false;
+    this.selectedSimilarTickets.clear();
+  }
+
+  fetchSimilarTickets(ticketId: string): void {
+    this.loadingSimilarTickets = true;
+    this.similarTickets = [];
+    this.similarTicketsSummary = '';
+    this.similarTicketsExpanded = true;
+    this.api.postForm('/jira/similar-tickets', { ticket_id: ticketId }).subscribe({
+      next: (res: any) => {
+        this.similarTickets = res.similar_tickets || [];
+        this.selectedSimilarTickets.clear();
+        this.similarTickets.forEach((t: any) => this.selectedSimilarTickets.add(t.key));
+        this.loadingSimilarTickets = false;
+      },
+      error: () => {
+        this.toast.error('Could not find similar tickets.');
+        this.loadingSimilarTickets = false;
+      },
+    });
+  }
+
+  generateSimilarSummary(ticketId: string): void {
+    if (!this.selectedSimilarTickets.size) return;
+    this.loadingSimilarSummary = true;
+    this.similarTicketsSummary = '';
+    const ids = Array.from(this.selectedSimilarTickets);
+    this.api.postJson<any>('/jira/similar-tickets-summary', {
+      ticket_id: ticketId,
+      similar_ticket_ids: ids,
+    }).subscribe({
+      next: (res) => {
+        this.similarTicketsSummary = res.summary || '';
+        this.loadingSimilarSummary = false;
+      },
+      error: () => {
+        this.toast.error('Could not generate AI summary.');
+        this.loadingSimilarSummary = false;
+      },
+    });
+  }
+
+  toggleSimilarTicket(key: string): void {
+    if (this.selectedSimilarTickets.has(key)) {
+      this.selectedSimilarTickets.delete(key);
+    } else {
+      this.selectedSimilarTickets.add(key);
+    }
+  }
+
+  removeSimilarTicket(key: string): void {
+    this.similarTickets = this.similarTickets.filter((t: any) => t.key !== key);
+    this.selectedSimilarTickets.delete(key);
+  }
+
+  toggleAllSimilarTickets(event: Event): void {
+    const checked = (event.target as HTMLInputElement).checked;
+    this.selectedSimilarTickets.clear();
+    if (checked) {
+      this.similarTickets.forEach((t: any) => this.selectedSimilarTickets.add(t.key));
+    }
+  }
+
+  addSimilarTicketsToContext(): void {
+    const ids = Array.from(this.selectedSimilarTickets);
+    if (!ids.length || this.addingSimilarToContext) return;
+    this.addingSimilarToContext = true;
+    let done = 0;
+    const failed: string[] = [];
+    ids.forEach(id => {
+      this.api.postForm('/chat/add-ticket', { ticket_id: id }).subscribe({
+        next: () => {
+          done++;
+          if (done === ids.length) {
+            this.addingSimilarToContext = false;
+            this.similarTicketsAddedToContext = true;
+            this.loadState();
+            const added = ids.length - failed.length;
+            this.toast.success(`${added} similar ticket${added !== 1 ? 's' : ''} added to chat context.`);
+            if (failed.length) this.toast.error(`Could not load: ${failed.join(', ')}`);
+          }
+        },
+        error: () => {
+          done++;
+          failed.push(id);
+          if (done === ids.length) {
+            this.addingSimilarToContext = false;
+            if (failed.length < ids.length) {
+              this.similarTicketsAddedToContext = true;
+              this.loadState();
+            }
+            this.toast.error(`Could not load: ${failed.join(', ')}`);
+          }
+        },
+      });
+    });
   }
 
   onFileSelect(e: Event): void {
@@ -1080,6 +1313,23 @@ export class TicketAnalyzerComponent implements OnInit, OnDestroy {
 
   trustHtml(html: string): SafeHtml {
     return this.sanitizer.bypassSecurityTrustHtml(html || '');
+  }
+
+  renderMarkdown(text: string): string {
+    if (!text?.trim()) return '';
+    const esc = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    let html = esc(text);
+    html = html.replace(/^###\s+(.+)$/gm, '</p><h4>$1</h4><p>');
+    html = html.replace(/^##\s+(.+)$/gm, '</p><h3>$1</h3><p>');
+    html = html.replace(/^#\s+(.+)$/gm, '</p><h2>$1</h2><p>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+    html = html.replace(/<\/ul>\s*<ul>/g, '');
+    html = html.replace(/\n/g, '<br>');
+    return '<p>' + html + '</p>';
   }
 
   /** Render assistant message as markdown (headings, bold, lists, code) for display. */

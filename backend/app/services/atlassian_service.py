@@ -749,6 +749,252 @@ class AtlassianService:
                 per_item.append({"index": idx, "id": tc_id, "title": title, "status": "failed"})
         return {"created_keys": created_keys, "skipped_duplicates": skipped_duplicates, "per_item": per_item}
 
+    # ------------------------------------------------------------------
+    # Similar-ticket discovery
+    # ------------------------------------------------------------------
+
+    # Candidate pool size fetched from Jira before similarity ranking
+    _CANDIDATE_POOL_SIZE = 50
+    _SIMILARITY_THRESHOLD = 0.35
+
+    def find_similar_tickets(
+        self,
+        ticket_id: str,
+        max_results: int = 10,
+        embed_fn=None,
+    ) -> Optional[Dict[str, Any]]:
+        """Find Jira tickets similar to *ticket_id* using semantic similarity.
+
+        1. Fetch the source ticket's summary and components.
+        2. Pull a broad candidate pool from Jira via simple JQL (same project,
+           same component, then widens to whole project).
+        3. Compute cosine similarity between the source summary and every
+           candidate summary using sentence embeddings.
+        4. Return the top *max_results* ranked by similarity score.
+
+        *embed_fn* must expose ``embed_documents(List[str]) -> List[List[float]]``.
+        If unavailable, falls back to a basic JQL keyword search.
+
+        Returns ``{"source": {...}, "similar_tickets": [...]}`` or *None*.
+        """
+        if not self.jira_client:
+            return None
+
+        project_key = ticket_id.split("-")[0] if "-" in ticket_id else ""
+        if not project_key:
+            return None
+
+        try:
+            source = self.jira_client.issue(
+                ticket_id,
+                fields="summary,components,labels",
+            )
+        except Exception:
+            return None
+
+        summary = getattr(source.fields, "summary", "") or ""
+        components = [
+            c.name for c in (getattr(source.fields, "components", None) or [])
+        ]
+        empty_result: Dict[str, Any] = {
+            "source": {"key": ticket_id, "summary": summary},
+            "similar_tickets": [],
+        }
+        if not summary.strip():
+            return empty_result
+
+        # --- Step 1: gather a broad candidate pool from Jira ---
+        pool_size = self._CANDIDATE_POOL_SIZE
+        base = f"project = {project_key} AND key != {ticket_id}"
+        comp_clause = ""
+        if components:
+            comp_list = ", ".join(f'"{escape_jql_string(c)}"' for c in components)
+            comp_clause = f" AND component in ({comp_list})"
+
+        # Extract significant words for keyword-based candidate fetching
+        kw_stop = {
+            "a", "an", "the", "is", "are", "was", "were", "be", "been",
+            "have", "has", "had", "do", "does", "did", "will", "would",
+            "could", "should", "to", "of", "in", "for", "on", "with", "at",
+            "by", "from", "as", "and", "but", "or", "not", "so", "if",
+            "when", "it", "its", "this", "that", "we", "they", "our",
+            "code", "change", "bug", "fix", "new", "add", "update",
+        }
+        kw_words = re.findall(r"[A-Za-z][A-Za-z0-9]{2,}", summary)
+        keywords = []
+        kw_seen: set = set()
+        for w in kw_words:
+            low = w.lower()
+            if low not in kw_stop and low not in kw_seen and len(w) > 2:
+                kw_seen.add(low)
+                keywords.append(w)
+            if len(keywords) >= 5:
+                break
+        text_clause = ""
+        if keywords:
+            text_clause = " AND " + " AND ".join(
+                f'summary ~ "{escape_jql_string(w)}"' for w in keywords[:3]
+            )
+            text_or_clause = " AND (" + " OR ".join(
+                f'summary ~ "{escape_jql_string(w)}"' for w in keywords
+            ) + ")"
+
+        fields = "summary,status,resolution,assignee,updated,comment"
+        candidates: Dict[str, Any] = {}  # key -> issue
+
+        queries: List[Optional[str]] = [
+            # --- Keyword-based queries (find older but relevant tickets) ---
+            # All keywords in summary, same component
+            f"{base}{comp_clause}{text_clause} ORDER BY updated DESC"
+            if text_clause and comp_clause else None,
+            # All keywords in summary, any component
+            f"{base}{text_clause} ORDER BY updated DESC"
+            if text_clause else None,
+            # Any keyword in summary, same component
+            f"{base}{comp_clause}{text_or_clause} ORDER BY updated DESC"
+            if keywords and comp_clause else None,
+            # Any keyword in summary, any component
+            f"{base}{text_or_clause} ORDER BY updated DESC"
+            if keywords else None,
+            # --- Recency-based queries (catch recent related work) ---
+            # Same component, resolved
+            f"{base}{comp_clause} AND statusCategory = Done ORDER BY updated DESC"
+            if comp_clause else None,
+            # Same component, any status
+            f"{base}{comp_clause} ORDER BY updated DESC"
+            if comp_clause else None,
+            # Whole project, resolved
+            f"{base} AND statusCategory = Done ORDER BY updated DESC",
+        ]
+
+        for jql in queries:
+            if jql is None:
+                continue
+            try:
+                logger.info("find_similar_tickets candidate JQL: %s", jql)
+                issues = self.jira_client.search_issues(
+                    jql, maxResults=pool_size, fields=fields,
+                )
+                for issue in issues:
+                    if issue.key not in candidates:
+                        candidates[issue.key] = issue
+            except Exception as exc:
+                logger.warning("find_similar_tickets JQL failed: %s", exc)
+            if len(candidates) >= pool_size:
+                break
+
+        if not candidates:
+            return empty_result
+
+        # --- Step 2: rank by semantic similarity ---
+        candidate_list = list(candidates.values())
+        candidate_summaries = [
+            getattr(iss.fields, "summary", "") or "" for iss in candidate_list
+        ]
+
+        scored: List[tuple] = []
+        if embed_fn is not None:
+            try:
+                all_texts = [summary] + candidate_summaries
+                embeddings = embed_fn.embed_documents(all_texts)
+                source_vec = embeddings[0]
+
+                for i, issue in enumerate(candidate_list):
+                    score = self._cosine_sim(source_vec, embeddings[i + 1])
+                    if score >= self._SIMILARITY_THRESHOLD:
+                        scored.append((score, issue))
+
+                scored.sort(key=lambda x: x[0], reverse=True)
+                logger.info(
+                    "find_similar_tickets: %d candidates, %d above threshold %.2f",
+                    len(candidate_list), len(scored), self._SIMILARITY_THRESHOLD,
+                )
+            except Exception as exc:
+                logger.warning("Embedding similarity failed, returning unranked: %s", exc)
+                scored = [(0.0, iss) for iss in candidate_list]
+        else:
+            logger.warning("No embedding function available; returning unranked candidates")
+            scored = [(0.0, iss) for iss in candidate_list]
+
+        top = scored[:max_results]
+        if not top:
+            return empty_result
+
+        results_list: List[Dict[str, Any]] = []
+        for score, issue in top:
+            f = issue.fields
+            comment_count = 0
+            if hasattr(f, "comment") and f.comment:
+                comment_count = (
+                    f.comment.total
+                    if hasattr(f.comment, "total")
+                    else len(f.comment.comments or [])
+                )
+            results_list.append({
+                "key": issue.key,
+                "summary": getattr(f, "summary", "") or "",
+                "status": f.status.name if hasattr(f, "status") and f.status else "",
+                "resolution": f.resolution.name if hasattr(f, "resolution") and f.resolution else "",
+                "assignee": f.assignee.displayName if hasattr(f, "assignee") and f.assignee else "Unassigned",
+                "updated": (f.updated or "")[:10] if hasattr(f, "updated") else "",
+                "comment_count": comment_count,
+                "similarity": round(score, 3),
+            })
+
+        return {
+            "source": {"key": ticket_id, "summary": summary},
+            "similar_tickets": results_list,
+        }
+
+    @staticmethod
+    def _cosine_sim(a: List[float], b: List[float]) -> float:
+        """Cosine similarity between two vectors."""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = sum(x * x for x in a) ** 0.5
+        norm_b = sum(x * x for x in b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    def get_similar_tickets_context(self, ticket_ids: List[str]) -> str:
+        """Build an LLM-friendly text block from the resolution details and
+        comments of the given tickets."""
+        if not self.jira_client or not ticket_ids:
+            return ""
+
+        sections: List[str] = []
+        for tid in ticket_ids[:10]:
+            try:
+                issue = self.jira_client.issue(
+                    tid,
+                    fields="summary,status,resolution,description,comment,assignee",
+                )
+            except Exception:
+                continue
+
+            f = issue.fields
+            lines = [
+                f"## {tid}: {getattr(f, 'summary', '')}",
+                f"Status: {f.status.name if hasattr(f, 'status') and f.status else 'Unknown'}",
+                f"Resolution: {f.resolution.name if hasattr(f, 'resolution') and f.resolution else 'N/A'}",
+                f"Assignee: {f.assignee.displayName if hasattr(f, 'assignee') and f.assignee else 'Unassigned'}",
+            ]
+
+            if getattr(f, "description", None):
+                desc = f.description[:2000]
+                lines.append(f"\nDescription (truncated):\n{desc}")
+
+            if hasattr(f, "comment") and f.comment and f.comment.comments:
+                lines.append(f"\nComments ({len(f.comment.comments)}):")
+                for c in f.comment.comments[-5:]:
+                    author = getattr(c.author, "displayName", "Unknown")
+                    body = c.body.strip()[:1000]
+                    lines.append(f"  [{author}]: {body}")
+
+            sections.append("\n".join(lines))
+
+        return "\n\n---\n\n".join(sections)
+
     def test_jira_connection(self) -> bool:
         try:
             if self.jira_client:
