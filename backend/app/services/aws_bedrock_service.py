@@ -16,6 +16,7 @@ from app.config.settings import (
     build_models_from_api_response,
     FALLBACK_MODELS,
     BEDROCK_INFERENCE_PROFILE_OVERRIDES,
+    MODELS_WITHOUT_SAMPLING_PARAMS,
 )
 
 logger = logging.getLogger(__name__)
@@ -157,13 +158,20 @@ class AWSBedrockService:
             return self._session.client(service_name='bedrock', region_name=self.aws_region, config=cfg)
         return boto3.client(service_name='bedrock', region_name=self.aws_region, config=cfg)
 
+    def _supports_sampling_params(self) -> bool:
+        model = self.bedrock_model or ""
+        return model not in MODELS_WITHOUT_SAMPLING_PARAMS
+
     def _create_llm(self) -> Optional[ChatBedrock]:
         if not self._bedrock_runtime_client:
             return None
+        kwargs: dict = {"max_tokens": self.max_tokens}
+        if self._supports_sampling_params():
+            kwargs["temperature"] = self.temperature
         return ChatBedrock(
             client=self._bedrock_runtime_client,
             model_id=self.bedrock_model,
-            model_kwargs={"temperature": self.temperature, "max_tokens": self.max_tokens},
+            model_kwargs=kwargs,
         )
 
     @property

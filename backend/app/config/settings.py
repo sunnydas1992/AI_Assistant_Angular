@@ -95,6 +95,7 @@ class AtlassianConfig:
 
 
 BEDROCK_INFERENCE_PROFILE_OVERRIDES = {
+    "anthropic.claude-opus-4-7": "us.anthropic.claude-opus-4-7",
     "anthropic.claude-opus-4-6-v1": "us.anthropic.claude-opus-4-6-v1",
     "anthropic.claude-opus-4-5-20251101-v1:0": "us.anthropic.claude-opus-4-5-20251101-v1:0",
     "anthropic.claude-opus-4-1-20250805-v1:0": "us.anthropic.claude-opus-4-1-20250805-v1:0",
@@ -107,6 +108,7 @@ BEDROCK_INFERENCE_PROFILE_OVERRIDES = {
 }
 
 MODEL_METADATA = {
+    "anthropic.claude-opus-4-7": {"context_window": "1M"},
     "anthropic.claude-opus-4-6-v1": {"context_window": "200K"},
     "anthropic.claude-opus-4-5-20251101-v1:0": {"context_window": "200K"},
     "anthropic.claude-opus-4-1-20250805-v1:0": {"context_window": "200K"},
@@ -145,6 +147,7 @@ MODEL_METADATA = {
 
 FALLBACK_MODELS = {
     # Claude 4 family (use inference profile IDs for cross-region; may be overwritten by API)
+    "Claude Opus 4.7 (Anthropic) - 1M": "us.anthropic.claude-opus-4-7",
     "Claude Opus 4.6 (Anthropic) - 200K": "us.anthropic.claude-opus-4-6-v1",
     "Claude Opus 4.5 (Anthropic) - 200K": "us.anthropic.claude-opus-4-5-20251101-v1:0",
     "Claude Opus 4.1 (Anthropic) - 200K": "us.anthropic.claude-opus-4-1-20250805-v1:0",
@@ -164,6 +167,13 @@ FALLBACK_MODELS = {
 }
 
 BEDROCK_MODELS = FALLBACK_MODELS.copy()
+
+# Models that do not support sampling parameters (temperature, top_p, top_k).
+# Requests including these params will be rejected with a 400 ValidationException.
+MODELS_WITHOUT_SAMPLING_PARAMS = {
+    "anthropic.claude-opus-4-7",
+    "us.anthropic.claude-opus-4-7",
+}
 
 
 def format_model_display_name(model_id: str, model_name: str, provider_name: str) -> str:
