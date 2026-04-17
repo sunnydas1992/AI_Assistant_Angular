@@ -299,6 +299,7 @@ Run through this quick smoke test:
 1. **Knowledge Base**: Click "Knowledge Base" in the sidebar. Try adding a Jira ticket ID — the app should fetch and index it.
 2. **Test Cases**: Click "Test Cases". Enter a Jira ticket ID, choose an output format (BDD or Xray), and click "Generate Test Cases". You should see generated test cases with confidence scores.
 3. **Ticket Analyzer**: Click "Ticket Analyzer". Enter a ticket ID, click "Load". Use quick actions like "Summarize" to verify the AI chat works. Each assistant response has a **Copy** button (copies content to clipboard) and a **Post to Jira** button (opens a preview overlay where you can review and edit the comment before posting it to the Jira ticket).
+4. **Similar Tickets**: From the Ticket Analyzer, click "View Details" on a loaded ticket, then click **"View Similar Tickets"** in the detail overlay footer. The system searches Jira for semantically similar resolved tickets using embeddings. You should see a ranked list with similarity percentages. Try selecting a few tickets and clicking **"Generate AI Summary"** — it should produce a resolution-pattern analysis. You can also use **"Add Selected to Context"** to include them in the chat conversation.
 
 ---
 

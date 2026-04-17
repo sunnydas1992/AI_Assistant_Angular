@@ -69,6 +69,7 @@ flowchart TB
   end
 
   VectorStore --> EmbeddingService
+  Atlassian -->|"embed + cosine rank"| EmbeddingService
 
   Atlassian -->|"REST"| JiraAPI[Jira API]
   Atlassian -->|"REST"| ConfluenceAPI[Confluence API]
@@ -89,6 +90,7 @@ flowchart TB
     ConvoAPI[Conversations]
     TestCaseAPI["Test cases"]
     TestPlanAPI["Test plan"]
+    SimilarAPI["Similar tickets"]
     ExportAPI[Export]
   end
 
@@ -111,6 +113,8 @@ flowchart TB
   TestCaseAPI --> Chroma
   TestPlanAPI --> Jira
   TestPlanAPI --> BedrockExt
+  SimilarAPI --> Jira
+  SimilarAPI --> BedrockExt
   ExportAPI --> BedrockExt
 ```
 
@@ -137,6 +141,42 @@ sequenceDiagram
   API->>RAG: bulk_create_xray_tests(...)
   RAG->>Atl: skip or create_issue
   Atl->>Jira: create issue (if not duplicate)
+```
+
+## Ticket Analyzer: similar tickets flow
+
+```mermaid
+sequenceDiagram
+  participant UI as TicketAnalyzerComponent
+  participant API as FastAPI
+  participant Atl as AtlassianService
+  participant Embed as EmbeddingService
+  participant Jira as Jira REST
+  participant LLM as AWS Bedrock
+
+  UI->>API: POST /api/jira/similar-tickets (ticket_id)
+  API->>Atl: find_similar_tickets(ticket_id, embed_fn)
+  Atl->>Jira: search_issues (keyword + recency JQL queries)
+  Jira-->>Atl: candidate pool (~50 issues)
+  Atl->>Embed: embed_documents([source + candidate summaries])
+  Embed-->>Atl: embedding vectors
+  Note over Atl: Rank by cosine similarity, filter ≥ threshold
+  Atl-->>API: top similar tickets with scores
+  API-->>UI: similar_tickets[] (key, summary, similarity, status, ...)
+
+  UI->>UI: User selects/deselects/removes tickets
+
+  UI->>API: POST /api/jira/similar-tickets-summary (ticket_id, selected IDs)
+  API->>Atl: get_similar_tickets_context(selected IDs)
+  Atl->>Jira: fetch details + comments for each ID
+  Jira-->>Atl: ticket details
+  Atl-->>API: context text
+  API->>LLM: invoke(system + context prompt)
+  LLM-->>API: resolution summary (markdown)
+  API-->>UI: summary
+
+  UI->>API: POST /api/chat/add-ticket (per selected ticket)
+  Note over UI,API: Adds similar tickets to chat context
 ```
 
 ## Frontend: shared thinking overlay
